@@ -4,6 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Агент покупок — выгодные и безопасные покупки",
   description: "Поиск лучших предложений по названию, фотографии и штрих-коду с итоговой ценой и проверкой продавца.",
+  icons: { icon: "/favicon.svg" },
   other: { "codex-preview": "development" },
 };
 
