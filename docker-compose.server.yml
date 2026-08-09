@@ -1,0 +1,29 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:8788:8788"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8788
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-gpt-5.4-nano}
+      WB_API_TOKEN: ${WB_API_TOKEN:-}
+      WB_CLIENT_SECRET: ${WB_CLIENT_SECRET:-}
+      OZON_CLIENT_ID: ${OZON_CLIENT_ID:-}
+      OZON_API_KEY: ${OZON_API_KEY:-}
+      YANDEX_MARKET_API_KEY: ${YANDEX_MARKET_API_KEY:-}
+      YANDEX_MARKET_BUSINESS_ID: ${YANDEX_MARKET_BUSINESS_ID:-}
+    volumes:
+      - worker_state:/app/.wrangler
+      - runtime_state:/app/.sites-runtime
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  worker_state:
+  runtime_state:
