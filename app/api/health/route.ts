@@ -1,4 +1,4 @@
-import { hasRuntimeValue } from "../../../lib/runtime";
+import { hasRuntimeBinding, hasRuntimeValue } from "../../../lib/runtime";
 import { marketplaceStatuses } from "../../../lib/marketplaces";
 
 export async function GET() {
@@ -13,7 +13,7 @@ export async function GET() {
       barcodeSearch: true,
       photoRecognition: hasRuntimeValue("OPENAI_API_KEY"),
       priceHistory: true,
-      persistentSearches: true,
+      persistentSearches: hasRuntimeBinding("DB"),
     },
     marketplaces,
   });

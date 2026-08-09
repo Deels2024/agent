@@ -209,13 +209,6 @@ const customerTabs: Array<{ id: CustomerTab; label: string; icon: string }> = [
 
 export default function Home() {
   const [tab, setTab] = useState<CustomerTab>("search");
-  const [query, setQuery] = useState("Apple AirPods Pro 2 USB-C");
-
-  function openSearch(event: React.FormEvent) {
-    event.preventDefault();
-    const value = query.trim();
-    window.location.assign(`/live-search${value ? `?q=${encodeURIComponent(value)}` : ""}`);
-  }
 
   return <main className="customer-app">
     <header className="customer-header">
@@ -227,7 +220,7 @@ export default function Home() {
     {tab === "search" && <>
       <section className="customer-hero">
         <div className="customer-hero-copy"><span className="customer-kicker">Личный агент выгодной покупки</span><h1>Найдём дешевле.<br />Проверим всё важное.</h1><p>Один поиск по маркетплейсам и небольшим магазинам — с итоговой ценой, доставкой, надёжностью продавца и защитой покупки.</p></div>
-        <form className="customer-search" onSubmit={openSearch}><label htmlFor="customer-query">Что хотите купить?</label><div><input id="customer-query" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Название, модель или штрих-код" /><button>Найти лучшее</button></div><p><a href="/live-search?mode=photo">▣ По фото</a><a href="/live-search?mode=barcode">▥ По штрих-коду</a><span>До 10 проверенных вариантов</span></p></form>
+        <form className="customer-search" action="/live-search" method="get"><label htmlFor="customer-query">Что хотите купить?</label><div><input id="customer-query" name="q" defaultValue="Apple AirPods Pro 2 USB-C" placeholder="Название, модель или штрих-код" /><button type="submit">Найти лучшее</button></div><p><a href="/live-search?mode=photo">▣ По фото</a><a href="/live-search?mode=barcode">▥ По штрих-коду</a><span>До 10 проверенных вариантов</span></p></form>
         <div className="customer-proof"><span><b>Итоговая цена</b><small>товар + доставка</small></span><span><b>Проверка продавца</b><small>рейтинг и гарантии</small></span><span><b>Контроль после покупки</b><small>цена, возврат, поддержка</small></span></div>
       </section>
       <section className="customer-content">
@@ -241,10 +234,4 @@ export default function Home() {
 
     {tab === "orders" && <section className="customer-dashboard"><div className="customer-section-title"><div><span className="customer-kicker">Мои покупки</span><h1>Всё под контролем</h1><p>Чек, гарантия, возврат и помощь хранятся в одном месте.</p></div></div><article className="protected-order"><div><span className="watch-status">Защищена</span><h2>Samsung QE65Q80D, 65″</h2><p>Заказ №1842 · доставка завтра, 12:00–16:00</p></div><div className="order-progress"><i /><i /><i className="pending" /><span>Оплачен</span><span>Передан курьеру</span><span>Получение</span></div><div className="order-actions"><button>Связаться с поддержкой</button><button>Условия возврата</button></div></article></section>}
 
-    {tab === "help" && <section className="customer-dashboard"><div className="customer-section-title"><div><span className="customer-kicker">Помощь</span><h1>Не оставим после оплаты</h1><p>Агент помогает с доставкой, возвратом, гарантией и спором.</p></div></div><div className="help-grid"><button><span>▤</span><b>Где мой заказ?</b><small>Проверить доставку</small></button><button><span>↻</span><b>Оформить возврат</b><small>Пошаговая помощь</small></button><button><span>!</span><b>Проблема с товаром</b><small>Открыть обращение</small></button><button><span>◉</span><b>Написать агенту</b><small>Ответим в чате</small></button></div><section className="help-promise"><b>Среднее время ответа — 3 минуты</b><span>История обращения и все подтверждения сохраняются.</span></section></section>}
-
-    {tab === "profile" && <section className="customer-dashboard"><div className="profile-banner"><span className="customer-avatar large">С</span><div><h1>Сергей</h1><p>Покупатель · профиль защищён</p></div></div><div className="profile-dashboard-grid"><article className="plus-dashboard"><span>Plus ✦</span><h2>Больше выгоды, без скрытых условий</h2><ul><li>неограниченные уведомления о цене</li><li>приоритетные задания агенту</li><li>семейный доступ и помощь с возвратами</li></ul><div><b>399 ₽/месяц</b><button>Попробовать бесплатно</button></div></article><article className="profile-links"><button>Адреса и оплата <span>›</span></button><button>Настройки поиска <span>›</span></button><button>Безопасность и данные <span>›</span></button><button>Семейный доступ <span>›</span></button></article></div></section>}
-
-    <footer className="customer-footer"><span>Агент покупок · честный выбор без скрытой наценки</span><div><a href="/prototype">Все 40 экранов</a><a href="/backend">Админка интеграций</a></div></footer>
-  </main>;
-}
+    {tab === "help" && <section className="customer-dashboard"><div className="customer-section-title"><div><span className="customer-kicker">Помощь</span><h1>Не оставим после оплаты</h1><p>Агент помогает с доставкой, возвратом, гарантией и спором.</p></div></div><div className="help-grid"><button><span>▤</span><b>Где мой заказ?</b><small>Проверить доставку</small></button><button><span>↻</span><b>Оформить возврат</b><smal

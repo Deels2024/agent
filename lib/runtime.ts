@@ -16,3 +16,7 @@ export function runtimeValue(name: string): string | undefined {
 export function hasRuntimeValue(name: string) {
   return Boolean(runtimeValue(name));
 }
+
+export function hasRuntimeBinding(name: string) {
+  return Boolean(runtimeEnv()[name]);
+}
