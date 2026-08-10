@@ -2,6 +2,7 @@ import { getDb } from "../../../db";
 import { ensureMarketplaceSchema } from "../../../db/ensure";
 import { recognitions } from "../../../db/schema";
 import { runtimeValue } from "../../../lib/runtime";
+import { enforceRateLimit } from "../../../lib/security";
 
 type RecognitionPayload = { imageDataUrl?: string };
 type Recognition = { productName: string; brand?: string; model?: string; barcode?: string; confidence: number };
@@ -32,6 +33,13 @@ function parseRecognition(text: string): Recognition {
 export async function POST(request: Request) {
   const apiKey = runtimeValue("OPENAI_API_KEY");
   if (!apiKey) return Response.json({ error: "Распознавание по фото ещё не активировано", code: "openai_not_configured" }, { status: 503 });
+  try {
+    await ensureMarketplaceSchema();
+    const rate = await enforceRateLimit(request, "public-recognition", 8, 3600);
+    if (!rate.allowed) return Response.json({ error: "Лимит распознаваний исчерпан. Повторите позже.", retryAfter: rate.retryAfter }, { status: 429 });
+  } catch {
+    return Response.json({ error: "Защита распознавания временно недоступна", code: "rate_limit_unavailable" }, { status: 503 });
+  }
   let payload: RecognitionPayload;
   try { payload = await request.json() as RecognitionPayload; }
   catch { return Response.json({ error: "Некорректный JSON" }, { status: 400 }); }

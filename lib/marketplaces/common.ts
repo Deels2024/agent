@@ -24,22 +24,49 @@ export function numberFrom(value: unknown) {
 }
 
 export function matchesOffer(input: SearchInput, values: unknown[]) {
-  const needle = (input.barcode || input.query).toLocaleLowerCase("ru").replace(/\s+/g, " ").trim();
-  if (!needle) return true;
-  return values.some((value) => String(value ?? "").toLocaleLowerCase("ru").includes(needle));
+  if (input.barcode) return values.some((value) => String(value ?? "").replace(/\D/g, "") === input.barcode);
+  const tokens = tokenize(input.query);
+  if (!tokens.length) return true;
+  const haystack = tokenize(values.map((value) => String(value ?? "")).join(" "));
+  const matched = tokens.filter((token) => haystack.some((value) => value === token || value.includes(token) || token.includes(value)));
+  return matched.length / tokens.length >= (tokens.length <= 2 ? 1 : 0.7);
 }
 
-export function rankOffers(offers: NormalizedOffer[], limit: number) {
+export function tokenize(value: string) {
+  return value.toLocaleLowerCase("ru")
+    .replace(/[ё]/g, "е")
+    .replace(/[^a-zа-я0-9]+/gi, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1);
+}
+
+export function matchConfidence(input: SearchInput, offer: Pick<NormalizedOffer, "productName" | "barcode">) {
+  if (input.barcode) return offer.barcode === input.barcode ? 100 : 0;
+  const queryTokens = tokenize(input.query);
+  const offerTokens = tokenize(offer.productName);
+  if (!queryTokens.length) return 0;
+  const matched = queryTokens.filter((token) => offerTokens.some((value) => value === token || value.includes(token) || token.includes(value)));
+  return Math.max(0, Math.min(100, Math.round((matched.length / queryTokens.length) * 100)));
+}
+
+export function rankOffers(offers: NormalizedOffer[], limit: number, input?: SearchInput) {
   const available = offers.filter((offer) => offer.inStock && offer.price > 0);
-  const lowest = Math.min(...available.map((offer) => offer.price), Infinity);
+  const total = (offer: NormalizedOffer) => offer.price + (offer.deliveryPrice ?? 0);
+  const lowest = Math.min(...available.map(total), Infinity);
   return available
-    .map((offer) => ({
-      ...offer,
-      score: Math.max(1, Math.min(100, Math.round(
-        70 + (lowest / offer.price) * 20 + (offer.verified ? 8 : 0) + (offer.deliveryDays === 0 ? 2 : 0)
-      ))),
-    }))
-    .sort((a, b) => a.price - b.price || b.score - a.score)
+    .map((offer) => {
+      const confidence = offer.matchConfidence ?? (input ? matchConfidence(input, offer) : 0);
+      return {
+        ...offer,
+        deliveryPrice: offer.deliveryPrice ?? 0,
+        matchConfidence: confidence,
+        score: Math.max(1, Math.min(100, Math.round(
+          35 + (lowest / total(offer)) * 30 + (confidence / 100) * 20 + (offer.verified ? 12 : 0) + (offer.deliveryDays === 0 ? 3 : 0)
+        ))),
+      };
+    })
+    .sort((a, b) => total(a) - total(b) || b.score - a.score)
     .slice(0, limit);
 }
 

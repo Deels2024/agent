@@ -25,6 +25,9 @@ for (const [path, expected] of [
   ["/live-search", "Найдём лучшее предложение"],
   ["/prototype", "Покупатель"],
   ["/backend", "Backend маркетплейсов"],
+  ["/platform", "15 модулей"],
+  ["/legal", "Все правила — открыто"],
+  ["/legal/buyer-agency-offer", "Публичная оферта на агентские"],
 ]) {
   test(`GET ${path} renders a page`, async () => {
     const response = await request(path, { headers: { accept: "text/html" } });
@@ -42,16 +45,71 @@ test("GET /api/health reports only configured capabilities", async () => {
   assert.equal(payload.capabilities.textSearch, true);
   assert.equal(payload.capabilities.photoRecognition, false);
   assert.equal(payload.capabilities.persistentSearches, false);
-  assert.equal(payload.marketplaces.length, 3);
+  assert.equal(payload.marketplaces.length, 4);
+  assert.equal(payload.platform.total, 15);
+});
+
+test("home header exposes a direct personal account entry", async () => {
+  const response = await request("/", { headers: { accept: "text/html" } });
+  const html = await response.text();
+  assert.match(html, /href=["']\/account["']/i);
+  assert.match(html, /Личный кабинет/i);
+});
+
+test("GET /api/platform/status reports all commercial modules honestly", async () => {
+  const response = await request("/api/platform/status");
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.summary.total, 15);
+  assert.equal(payload.summary.implemented, 15);
+  assert.equal(payload.modules.length, 15);
+  assert.equal(payload.modules.some((module) => module.status === "external_contract"), true);
+});
+
+for (const [method, path] of [
+  ["POST", "/api/account/bootstrap"],
+  ["POST", "/api/orders"],
+  ["POST", "/api/price-alerts"],
+  ["POST", "/api/sellers/profile"],
+  ["POST", "/api/legal/register"],
+  ["GET", "/api/admin/overview"],
+  ["GET", "/api/admin/operations"],
+]) {
+  test(`${method} ${path} requires an authenticated user`, async () => {
+    const response = await request(path, { method, headers: { "content-type": "application/json" }, body: method === "POST" ? "{}" : undefined });
+    assert.equal(response.status, 401);
+    assert.equal((await response.json()).code, "authentication_required");
+  });
+}
+
+test("payment and delivery webhooks reject unsigned events", async () => {
+  for (const path of ["/api/webhooks/payment", "/api/webhooks/delivery"]) {
+    const response = await request(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ externalId: "test", status: "succeeded" }) });
+    assert.equal(response.status, 401);
+  }
 });
 
 test("GET /api/marketplaces/status exposes honest configuration state", async () => {
   const response = await request("/api/marketplaces/status");
   assert.equal(response.status, 200);
   const payload = await response.json();
-  assert.equal(payload.total, 3);
+  assert.equal(payload.total, 4);
   assert.equal(payload.configured, 0);
   assert.equal(payload.recognition.configured, false);
+});
+
+test("GET /admin does not expose administrative data to a regular user", async () => {
+  const response = await request("/admin", { headers: { accept: "text/html", "oai-authenticated-user-email": "buyer@example.test" } });
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Доступ только для администратора/i);
+  assert.doesNotMatch(html, /Очередь внимания/i);
+});
+
+test("admin API rejects an authenticated user without allowlist access", async () => {
+  const response = await request("/api/admin/operations", { headers: { "oai-authenticated-user-email": "buyer@example.test" } });
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).code, "admin_required");
 });
 
 test("POST /api/search returns ranked demo offers without external credentials", async () => {
@@ -64,17 +122,29 @@ test("POST /api/search returns ranked demo offers without external credentials",
   const payload = await response.json();
   assert.equal(payload.demo, true);
   assert.equal(payload.persistence, "unavailable");
-  assert.equal(payload.offers.length, 4);
+  assert.equal(payload.offers.length, 3);
   assert.deepEqual(
     payload.offers.map((offer) => offer.price),
     [...payload.offers].map((offer) => offer.price).sort((a, b) => a - b),
   );
 });
 
-test("GET /api/history fails safely when D1 is not configured", async () => {
+test("GET /api/history requires identity before reading saved searches", async () => {
   const response = await request("/api/history");
-  assert.equal(response.status, 503);
-  assert.deepEqual(await response.json(), { error: "История пока недоступна" });
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).code, "authentication_required");
+});
+
+test("authenticated mutations reject cross-site browser requests", async () => {
+  const response = await request("/api/account/bootstrap", { method: "POST", headers: { "oai-authenticated-user-email": "buyer@example.test", origin: "https://evil.example", "sec-fetch-site": "cross-site" } });
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).code, "untrusted_origin");
+});
+
+test("worker adds baseline browser security headers", async () => {
+  const response = await request("/", { headers: { accept: "text/html" } });
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors/i);
 });
 
 test("POST /api/recognize explains missing OpenAI configuration", async () => {

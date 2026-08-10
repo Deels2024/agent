@@ -51,7 +51,7 @@ export default function BackendPage() {
   return <main className="backend-page">
     <header className="product-bar">
       <a href="/" className="product-logo"><span className="product-logo-mark">✦</span><span>Агент покупок</span></a>
-      <nav><a href="/live-search">Живой поиск</a><a className="active" href="/backend">Интеграции</a></nav>
+      <nav><a href="/live-search">Живой поиск</a><a className="active" href="/backend">Интеграции</a><a href="/platform">15 модулей</a></nav>
     </header>
     <section className="backend-hero">
       <div><span className="kicker">Центр подключений</span><h1>Backend маркетплейсов</h1><p>Единый сервер принимает запрос покупателя, проверяет подключённые каталоги и возвращает до 10 предложений по цене и надёжности.</p></div>

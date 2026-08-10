@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { runtimeValue } from "../lib/runtime";
 
 export type ChatGPTUser = {
   displayName: string;
@@ -18,7 +19,7 @@ const CALLBACK_PATH = "/callback";
 
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   const requestHeaders = await headers();
-  const email = requestHeaders.get(USER_EMAIL_HEADER);
+  const email = requestHeaders.get(USER_EMAIL_HEADER) ?? (process.env.NODE_ENV === "production" ? null : runtimeValue("DEV_USER_EMAIL"));
   if (!email) return null;
 
   const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);

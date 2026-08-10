@@ -2,10 +2,12 @@
 /* eslint-disable @next/next/no-html-link-for-pages, @next/next/no-img-element, react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { TRANSACTION_CONFIRMATION_VERSION } from "../../lib/legal-documents";
 
 type Mode = "text" | "barcode" | "photo";
 type Sort = "price" | "trust";
-type Offer = { id: string; providerLabel: string; productName: string; sellerName: string; price: number; oldPrice?: number; deliveryDays?: number; score: number; url?: string; verified: boolean };
+type Offer = { id: string; provider: string; providerLabel: string; productName: string; sellerName: string; price: number; deliveryPrice?: number; oldPrice?: number; deliveryDays?: number; score: number; matchConfidence?: number; quoteId?: string | null; url?: string; verified: boolean };
 type SearchResponse = {
   demo: boolean;
   generatedAt: string;
@@ -19,6 +21,7 @@ type Recognition = { productName: string; brand?: string; model?: string; barcod
 const rubles = new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 });
 
 export default function LiveSearchPage() {
+  const router = useRouter();
   const [mode, setMode] = useState<Mode>("text");
   const [query, setQuery] = useState("Apple AirPods Pro 2 USB-C");
   const [barcode, setBarcode] = useState("");
@@ -31,6 +34,12 @@ export default function LiveSearchPage() {
   const [sort, setSort] = useState<Sort>("price");
   const [verifiedOnly, setVerifiedOnly] = useState(true);
   const [alertEnabled, setAlertEnabled] = useState(false);
+  const [actionMessage, setActionMessage] = useState("");
+  const [orderBusy, setOrderBusy] = useState("");
+  const [requesting, setRequesting] = useState(false);
+  const [requestForm, setRequestForm] = useState({ targetPrice: "", city: "", quantity: "1" });
+  const [pendingOffer, setPendingOffer] = useState<Offer | null>(null);
+  const [transactionChecked, setTransactionChecked] = useState(false);
 
   async function runSearch(searchQuery = query, searchBarcode = barcode, searchMode: Mode = mode) {
     setLoading(true); setError(""); setResult(null); setAlertEnabled(false);
@@ -42,7 +51,7 @@ export default function LiveSearchPage() {
       });
       const payload = await response.json() as SearchResponse;
       if (!response.ok) setError(payload.error || "Не удалось выполнить поиск");
-      else setResult(payload);
+      else { setResult(payload); if (payload.demo) setVerifiedOnly(false); }
     } catch {
       setError("Связь прервалась. Проверьте интернет и повторите поиск.");
     } finally {
@@ -90,11 +99,33 @@ export default function LiveSearchPage() {
     reader.readAsDataURL(file);
   }
 
+  async function createProtectedOrder(offer: Offer) {
+    if (!transactionChecked) { setActionMessage("Подтвердите продавца и условия конкретной сделки"); return; }
+    if (!offer.quoteId) { setActionMessage("Не удалось зафиксировать цену. Обновите поиск и повторите."); return; }
+    setOrderBusy(offer.id); setActionMessage("Фиксируем предложение…");
+    const response = await fetch("/api/orders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteId: offer.quoteId, termsAccepted: true, sellerRoleAccepted: true, transactionConfirmationVersion: TRANSACTION_CONFIRMATION_VERSION }) });
+    const payload = await response.json() as { error?: string };
+    if ([401, 428].includes(response.status)) { router.push("/register?return_to=/live-search"); return; }
+    setActionMessage(response.ok ? result?.demo ? "Тестовая заявка создана. Она отмечена как демо и не требует оплаты." : "Предложение зафиксировано. Заказ появился в личном кабинете." : payload.error ?? "Не удалось создать заявку");
+    if (response.ok) { setPendingOffer(null); setTransactionChecked(false); }
+    setOrderBusy("");
+  }
+
+  async function createDemandRequest(event: FormEvent) {
+    event.preventDefault(); setRequesting(true); setActionMessage("Ищем подходящие малые магазины…");
+    const response = await fetch("/api/demand-requests", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, barcode: barcode || undefined, targetPrice: requestForm.targetPrice ? Number(requestForm.targetPrice) : undefined, city: requestForm.city, quantity: Number(requestForm.quantity) }) });
+    const payload = await response.json() as { error?: string; message?: string; matchedSellers?: number };
+    if ([401, 428].includes(response.status)) { router.push("/register?return_to=/live-search"); return; }
+    setActionMessage(response.ok ? `${payload.message}. Подходящих магазинов сейчас: ${payload.matchedSellers ?? 0}.` : payload.error ?? "Не удалось отправить запрос");
+    if (response.ok) setRequestForm({ targetPrice: "", city: "", quantity: "1" });
+    setRequesting(false);
+  }
+
   const visibleOffers = useMemo(() => {
     if (!result) return [];
     return result.offers.filter((offer) => !verifiedOnly || offer.verified).sort((a, b) => sort === "trust" ? b.score - a.score || a.price - b.price : a.price - b.price || b.score - a.score);
   }, [result, sort, verifiedOnly]);
-  const averagePrice = result?.offers.length ? Math.round(result.offers.reduce((sum, offer) => sum + offer.price, 0) / result.offers.length) : 0;
+  const averagePrice = result?.offers.length ? Math.round(result.offers.reduce((sum, offer) => sum + offer.price + (offer.deliveryPrice ?? 0), 0) / result.offers.length) : 0;
   const savings = result?.summary.bestPrice ? Math.max(0, averagePrice - result.summary.bestPrice) : 0;
   const updatedTime = result?.generatedAt ? new Date(result.generatedAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) : "—";
 
@@ -112,6 +143,7 @@ export default function LiveSearchPage() {
       </form> : <label className="photo-drop"><input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={recognize} /><span>▣</span><b>{recognizing ? "Распознаю товар…" : "Выбрать или сфотографировать товар"}</b><small>Сначала покажем найденную модель — вы сможете её исправить</small></label>}
       {recognition && <section className="recognition-confirm"><div className="recognition-preview">{photoPreview ? <img src={photoPreview} alt="Загруженный товар" /> : "▣"}</div><div><span className="recognition-confidence">Совпадение {Math.round(recognition.confidence * 100)}%</span><h2>Мы правильно определили товар?</h2><label>Название и модель<input value={query} onChange={(event) => setQuery(event.target.value)} /></label>{barcode && <small>Штрих-код: {barcode}</small>}<div><button className="confirm-button" onClick={() => void runSearch(query, barcode, "photo")}>Да, найти предложения</button><button className="change-photo" onClick={() => { setRecognition(null); setPhotoPreview(""); }}>Выбрать другое фото</button></div></div></section>}
       {error && <div className="search-error"><b>Не получилось выполнить действие</b><span>{error}</span><button onClick={() => mode === "photo" ? setRecognition(null) : void runSearch()}>Попробовать ещё раз</button></div>}
+      {actionMessage && <div className="search-action-message" role="status"><span>✓</span><p>{actionMessage}</p><button onClick={() => setActionMessage("")} aria-label="Закрыть">×</button></div>}
     </section>
 
     {loading && <section className="search-loading"><span /><div><b>Агент проверяет источники</b><p>Сопоставляем точную модель, итоговые цены, наличие и условия продавцов…</p></div></section>}
@@ -127,15 +159,17 @@ export default function LiveSearchPage() {
             const offerSavings = Math.max(0, averagePrice - offer.price);
             return <article className={`live-offer ${isBest ? "best" : ""}`} key={offer.id}>
               <div className="offer-rank">{index + 1}</div>
-              <div className="offer-main"><div><b>{offer.providerLabel}</b>{offer.verified && <span>✓ проверенный источник</span>}</div><h3>{offer.productName}</h3><p>{offer.sellerName} · доставка {offer.deliveryDays === 0 ? "сегодня" : offer.deliveryDays === 1 ? "завтра" : `через ${offer.deliveryDays ?? 2} дн.`}</p><div className="offer-facts"><span>Совпадение модели</span><b>{offer.verified ? "98%" : "проверить"}</b><span>Возврат</span><b>14 дней</b><span>Гарантия</span><b>1 год</b></div><details className="trust-details"><summary>Почему оценка {offer.score}/100?</summary><p>{offer.verified ? "Источник и продавец проверены. " : "Требуется дополнительная проверка продавца. "}{isBest ? "Это минимальная итоговая цена среди найденных вариантов." : "Цена, доставка и условия учтены в общей оценке."}</p></details></div>
-              <div className="offer-buy">{offer.oldPrice && <del>{rubles.format(offer.oldPrice)}</del>}<small>Товар</small><strong>{rubles.format(offer.price)}</strong><div className="price-breakdown"><span>Доставка</span><b>0 ₽</b><span>Итого к оплате</span><b>{rubles.format(offer.price)}</b></div>{offerSavings > 0 && <em>выгода {rubles.format(offerSavings)}</em>}{offer.url ? <a href={offer.url} target="_blank" rel="noreferrer">Открыть у продавца</a> : <button>Безопасная сделка</button>}<small className="responsibility">Оплата и возврат: {offer.url ? offer.providerLabel : "Агент покупок"}</small></div>
+              <div className="offer-main"><div><b>{offer.providerLabel}</b>{offer.verified ? <span>✓ проверенный источник</span> : <span className="demo-source">учебные данные</span>}</div><h3>{offer.productName}</h3><p>{offer.sellerName} · доставка {offer.deliveryDays === 0 ? "сегодня" : offer.deliveryDays === 1 ? "завтра" : `через ${offer.deliveryDays ?? 2} дн.`}</p><div className="offer-facts"><span>Совпадение модели</span><b>{offer.matchConfidence ?? 0}%</b><span>Возврат</span><b>{result.demo ? "не применяется" : "по правилам продавца"}</b><span>Цена действует</span><b>15 минут</b></div><details className="trust-details"><summary>Почему оценка {offer.score}/100?</summary><p>{offer.verified ? "Источник и продавец проверены. " : "Это учебное предложение, оно не подтверждает рыночную цену. "}{isBest ? "Это минимальная итоговая сумма среди найденных вариантов." : "Товар, доставка и точность модели учтены в общей оценке."}</p></details></div>
+              <div className="offer-buy">{offer.oldPrice && <del>{rubles.format(offer.oldPrice)}</del>}<small>Товар</small><strong>{rubles.format(offer.price)}</strong><div className="price-breakdown"><span>Доставка</span><b>{rubles.format(offer.deliveryPrice ?? 0)}</b><span>Итого к оплате</span><b>{rubles.format(offer.price + (offer.deliveryPrice ?? 0))}</b></div>{offerSavings > 0 && <em>выгода {rubles.format(offerSavings)}</em>}{offer.url ? <a href={offer.url} target="_blank" rel="noreferrer">Открыть у продавца</a> : <button disabled={orderBusy === offer.id || !offer.quoteId} onClick={() => { setPendingOffer(offer); setTransactionChecked(false); }}>{orderBusy === offer.id ? "Фиксируем…" : result.demo ? "Создать тестовую заявку" : "Оформить безопасно"}</button>}<small className="responsibility">{result.demo ? "Деньги не списываются" : `Продавец и чек: ${offer.sellerName}`}</small></div>
             </article>;
           })}
           {visibleOffers.length === 0 && <div className="no-results"><b>Подходящих предложений по фильтру нет</b><p>Отключите фильтр проверенных продавцов или уточните модель товара.</p><button onClick={() => setVerifiedOnly(false)}>Показать все варианты</button></div>}
           {result.offers.length > 0 && <section className="price-watch"><div><span>♧</span><div><b>Не готовы покупать сейчас?</b><p>Агент продолжит следить за итоговой ценой и сообщит о настоящем снижении.</p></div></div><button className={alertEnabled ? "enabled" : ""} onClick={() => setAlertEnabled(!alertEnabled)}>{alertEnabled ? "✓ Наблюдение включено" : "Следить за ценой"}</button>{alertEnabled && <small>Для полноценной рассылки уведомлений потребуется вход в профиль.</small>}</section>}
+          <section className="merchant-demand" id="merchant-demand"><div><span className="kicker">Цена от малого магазина</span><h2>Попросить продавцов сделать предложение</h2><p>Отправим точную модель проверенным магазинам. Они смогут ответить своей ценой, сроком доставки и гарантией в течение 24 часов.</p></div><form onSubmit={createDemandRequest}><label>Желаемая цена<input type="number" min="1" step="0.01" value={requestForm.targetPrice} onChange={(event) => setRequestForm({ ...requestForm, targetPrice: event.target.value })} placeholder="Необязательно" /></label><label>Город<input value={requestForm.city} onChange={(event) => setRequestForm({ ...requestForm, city: event.target.value })} placeholder="Например, Москва" /></label><label>Количество<input type="number" min="1" max="20" value={requestForm.quantity} onChange={(event) => setRequestForm({ ...requestForm, quantity: event.target.value })} /></label><button disabled={requesting}>{requesting ? "Отправляем…" : "Запросить цены"}</button></form></section>
         </div>
         <aside className="sources-panel"><h3>Контроль качества</h3><div className="quality-score"><b>{result.offers[0]?.score ?? 0}<small>/100</small></b><span>оценка лучшего варианта</span></div><p className="quality-copy">Оценка учитывает цену, наличие, срок доставки и проверку источника.</p><h4>Источники поиска</h4>{result.providers.map((provider) => <div key={provider.provider}><span className={`provider-dot ${provider.status === "ok" ? "online" : provider.status === "error" ? "error" : ""}`} /><p><b>{provider.label}</b><small>{provider.status === "ok" ? `Цена получена за ${provider.latencyMs} мс` : provider.status === "not_configured" ? "Ожидает партнёрского доступа" : "Временно недоступен"}</small></p></div>)}<a href="/backend">Подробный статус источников →</a><div className="buyer-guarantee"><b>◇ Принцип честной цены</b><p>Рекламные места не влияют на сортировку. Платное продвижение будет явно отмечено.</p></div></aside>
       </section>
     </>}
+    {pendingOffer && <div className="transaction-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setPendingOffer(null); }}><section className="transaction-modal" role="dialog" aria-modal="true" aria-labelledby="transaction-title"><header><div><span className="customer-kicker">Подтверждение конкретной сделки</span><h2 id="transaction-title">Проверьте продавца и сумму</h2></div><button onClick={() => setPendingOffer(null)} aria-label="Закрыть">×</button></header><div className="transaction-product"><span>▣</span><div><b>{pendingOffer.productName}</b><small>{pendingOffer.providerLabel}</small></div></div><dl><div><dt>Продавец товара</dt><dd>{pendingOffer.sellerName}</dd></div><div><dt>Цена товара</dt><dd>{rubles.format(pendingOffer.price)}</dd></div><div><dt>Доставка</dt><dd>{rubles.format(pendingOffer.deliveryPrice ?? 0)}</dd></div><div className="total"><dt>Итого</dt><dd>{rubles.format(pendingOffer.price + (pendingOffer.deliveryPrice ?? 0))}</dd></div></dl><div className="transaction-roles"><p><span>Магазин</span><b>Продаёт товар, выдаёт чек, отвечает за качество и возврат</b></p><p><span>Агент покупок</span><b>Выполняет поручение, фиксирует цену и передаёт заказ</b></p><p><span>Платёжный партнёр</span><b>Проводит безопасный расчёт после подключения</b></p></div><label className="transaction-confirm"><input type="checkbox" checked={transactionChecked} onChange={(event) => setTransactionChecked(event.target.checked)} /><span>Подтверждаю точную модель, продавца и итоговую сумму. Понимаю, что договор продажи заключается с <b>{pendingOffer.sellerName}</b>, и принимаю <a href="/legal/buyer-agency-offer" target="_blank">агентскую оферту</a> и <a href="/legal/safe-deal-rules" target="_blank">правила безопасной сделки</a>.</span></label><button className="transaction-submit" disabled={!transactionChecked || orderBusy === pendingOffer.id} onClick={() => void createProtectedOrder(pendingOffer)}>{orderBusy === pendingOffer.id ? "Фиксируем предложение…" : result?.demo ? "Создать демо-заявку без оплаты" : "Подтвердить и создать заявку"}</button><small>Версия подтверждения {TRANSACTION_CONFIRMATION_VERSION}. Деньги на этом шаге не списываются.</small></section></div>}
   </main>;
 }
