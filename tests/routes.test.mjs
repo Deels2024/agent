@@ -45,6 +45,8 @@ test("GET /api/health reports only configured capabilities", async () => {
   assert.equal(payload.capabilities.textSearch, true);
   assert.equal(payload.capabilities.photoRecognition, false);
   assert.equal(payload.capabilities.persistentSearches, false);
+  assert.equal(payload.capabilities.accounts, false);
+  assert.equal(payload.runtime.database, "unavailable");
   assert.equal(payload.marketplaces.length, 4);
   assert.equal(payload.platform.total, 15);
 });

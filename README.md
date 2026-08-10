@@ -103,6 +103,23 @@ npm run build
 npm run start
 ```
 
+`npm run start` удобен для локальной проверки интерфейса, но Node-адаптер Vinext не создаёт Cloudflare D1. Поэтому для серверного Docker-запуска используется отдельная команда `npm run start:docker`: она запускает собранный Worker в workerd и хранит D1 в постоянном Docker volume.
+
+### Развёртывание на собственном сервере
+
+```bash
+git clone https://github.com/Deels2024/agent.git
+cd agent
+cp .env.example .env
+chmod 600 .env
+docker compose -f docker-compose.server.yml up -d --build --wait
+curl --fail http://127.0.0.1:8788/api/health
+```
+
+Контейнер считается здоровым только когда доступна постоянная база. Данные D1 сохраняются в volume `worker_state` и не теряются при пересборке контейнера. Файл `.env` остаётся только на сервере и не должен попадать в Git.
+
+Личный кабинет использует подтверждённую платформой личность из заголовка `oai-authenticated-user-email`. Публичный Docker-порт нельзя выставлять напрямую в интернет: перед ним должен находиться доверенный шлюз аутентификации и HTTPS reverse proxy. Основная версия Sites уже предоставляет такой контур автоматически.
+
 Проверки:
 
 ```bash
