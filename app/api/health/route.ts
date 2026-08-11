@@ -2,6 +2,7 @@ import { ensureMarketplaceSchema } from "../../../db/ensure";
 import { hasRuntimeValue, runtimeEnv } from "../../../lib/runtime";
 import { marketplaceStatuses } from "../../../lib/marketplaces";
 import { platformSummary } from "../../../lib/platform";
+import { authMode } from "../../../lib/standalone-auth";
 
 export async function GET() {
   const marketplaces = marketplaceStatuses();
@@ -9,10 +10,11 @@ export async function GET() {
   return Response.json({
     ok: true,
     service: "buyer-agent-backend",
-    version: "0.6.0",
+    version: "0.7.0",
     timestamp: new Date().toISOString(),
     runtime: {
       database: databaseReady ? "ready" : "unavailable",
+      authentication: authMode(),
       databaseRequiredFor: ["registration", "account", "seller", "orders", "admin"],
     },
     capabilities: {

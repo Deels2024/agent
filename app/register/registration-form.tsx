@@ -4,7 +4,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { buyerRegistrationDocuments, optionalRegistrationDocuments } from "../../lib/legal-documents";
 
-export default function RegistrationForm({ name, email, returnTo }: { name: string; email: string; returnTo: string }) {
+export default function RegistrationForm({ name, email, returnTo, logoutHref }: { name: string; email: string; returnTo: string; logoutHref: string }) {
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [marketing, setMarketing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -35,7 +35,7 @@ export default function RegistrationForm({ name, email, returnTo }: { name: stri
   }
 
   return <main className="registration-page">
-    <header><a href="/" className="product-logo"><span className="product-logo-mark">✦</span><span>Агент покупок</span></a><a href="/signout-with-chatgpt?return_to=/">Выйти</a></header>
+    <header><a href="/" className="product-logo"><span className="product-logo-mark">✦</span><span>Агент покупок</span></a><a href={logoutHref}>Выйти</a></header>
     <section className="registration-shell">
       <div className="registration-intro"><span className="customer-kicker">Защищённая регистрация</span><h1>Один понятный шаг — и агент готов работать</h1><p>Мы не прячем договоры в одной строке. Каждый обязательный документ подтверждается отдельно, а реклама не включается автоматически.</p><div className="registration-person"><span>{name.slice(0, 1).toUpperCase()}</span><div><b>{name}</b><small>{email}</small></div><em>Личность подтверждена входом</em></div><ul><li>Сервис действует как агент покупателя</li><li>Продавец отвечает за товар и чек</li><li>Оплата идёт продавцу или банковскому партнёру</li><li>Каждая версия согласия сохраняется</li></ul></div>
       <form className="registration-consents" onSubmit={submit}>

@@ -7,7 +7,7 @@ import { writeAudit } from "../../../../lib/audit";
 import { cleanText, enforceRateLimit } from "../../../../lib/security";
 
 export async function GET(request: Request) {
-  const identity = requireAdmin(request);
+  const identity = await requireAdmin(request);
   if (identity instanceof Response) return identity;
   try {
     await ensureMarketplaceSchema();
@@ -19,7 +19,7 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const identity = requireAdmin(request);
+  const identity = await requireAdmin(request);
   if (identity instanceof Response) return identity;
   try {
     await ensureMarketplaceSchema();

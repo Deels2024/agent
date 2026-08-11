@@ -1,11 +1,11 @@
 import { adminEmails } from "../../lib/auth";
-import { requireChatGPTUser } from "../chatgpt-auth";
+import { authSignOutPath, requireAuthenticatedUser } from "../chatgpt-auth";
 import AdminDashboard from "./admin-dashboard";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
-  const user = await requireChatGPTUser("/admin");
+  const user = await requireAuthenticatedUser("/admin");
   const isAdmin = adminEmails().has(user.email.toLowerCase());
 
   if (!isAdmin) {
@@ -21,5 +21,5 @@ export default async function AdminPage() {
     </main>;
   }
 
-  return <AdminDashboard initialName={user.displayName} initialEmail={user.email} />;
+  return <AdminDashboard initialName={user.displayName} initialEmail={user.email} logoutHref={authSignOutPath(user.provider)} />;
 }

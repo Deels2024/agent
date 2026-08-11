@@ -11,7 +11,7 @@ type RiskRow = { id: number; actor_email: string | null; event_type: string; sco
 type AuditRow = { id: number; actor_email: string | null; action: string; entity_type: string; entity_id: string | null; created_at: string };
 
 export async function GET(request: Request) {
-  const identity = requireAdmin(request);
+  const identity = await requireAdmin(request);
   if (identity instanceof Response) return identity;
   try {
     await ensureMarketplaceSchema();
@@ -39,7 +39,7 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const identity = requireAdmin(request);
+  const identity = await requireAdmin(request);
   if (identity instanceof Response) return identity;
   try {
     await ensureMarketplaceSchema();

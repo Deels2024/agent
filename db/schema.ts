@@ -97,6 +97,28 @@ export const users = sqliteTable("users", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [index("users_role_status_idx").on(table.role, table.status)]);
 
+export const authCredentials = sqliteTable("auth_credentials", {
+  email: text("email").primaryKey(),
+  displayName: text("display_name").notNull(),
+  passwordSalt: text("password_salt").notNull(),
+  passwordHash: text("password_hash").notNull(),
+  passwordIterations: integer("password_iterations").notNull(),
+  status: text("status").notNull().default("active"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [index("auth_credentials_status_idx").on(table.status)]);
+
+export const authSessions = sqliteTable("auth_sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  userEmail: text("user_email").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  expiresAt: text("expires_at").notNull(),
+  userAgentHash: text("user_agent_hash"),
+}, (table) => [
+  index("auth_sessions_user_idx").on(table.userEmail, table.createdAt),
+  index("auth_sessions_expires_idx").on(table.expiresAt),
+]);
+
 export const legalAcceptances = sqliteTable("legal_acceptances", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userEmail: text("user_email").notNull(),

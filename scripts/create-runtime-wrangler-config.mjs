@@ -14,6 +14,7 @@ if (dirname(source) !== dirname(target)) {
 }
 
 const applicationVariables = [
+  "AUTH_MODE",
   "OPENAI_API_KEY",
   "OPENAI_VISION_MODEL",
   "WB_API_TOKEN",

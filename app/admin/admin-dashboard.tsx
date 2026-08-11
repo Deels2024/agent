@@ -37,7 +37,7 @@ function date(value: string) { return new Date(value).toLocaleString("ru-RU", { 
 function money(value: number) { return `${value.toLocaleString("ru-RU")} ₽`; }
 const orderTransitions: Record<string, string[]> = { created: ["cancelled"], awaiting_payment: ["cancelled"], paid: ["processing", "disputed", "refunded"], processing: ["delivered", "disputed", "refunded", "cancelled"], delivered: ["disputed", "refunded"], disputed: ["processing", "delivered", "refunded", "cancelled"], refunded: [], cancelled: [] };
 
-export default function AdminDashboard({ initialName, initialEmail }: { initialName: string; initialEmail: string }) {
+export default function AdminDashboard({ initialName, initialEmail, logoutHref }: { initialName: string; initialEmail: string; logoutHref: string }) {
   const [section, setSection] = useState<AdminSection>("overview");
   const [metrics, setMetrics] = useState<Metrics>({ users: 0, sellers: 0, orders: 0, openDemand: 0, openDisputes: 0, elevatedRisks: 0, failedNotifications: 0 });
   const [modules, setModules] = useState<Module[]>([]);
@@ -103,7 +103,7 @@ export default function AdminDashboard({ initialName, initialEmail }: { initialN
       <a className="admin-logo" href="/"><span>✦</span><div><b>Агент покупок</b><small>Управление сервисом</small></div></a>
       <div className="admin-environment"><span></span><div><b>Production</b><small>Защищённая зона</small></div></div>
       <nav aria-label="Разделы админ-панели">{nav.map((item) => <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => setSection(item.id)}><span>{item.icon}</span>{item.label}{item.id === "disputes" && metrics.openDisputes > 0 && <em>{metrics.openDisputes}</em>}{item.id === "risk" && metrics.elevatedRisks > 0 && <em>{metrics.elevatedRisks}</em>}</button>)}</nav>
-      <div className="admin-sidebar-foot"><a href="/account">← Личный кабинет</a><a href="/platform">Состояние платформы</a><a className="admin-logout" href="/signout-with-chatgpt?return_to=/">↪ Выйти из системы</a></div>
+      <div className="admin-sidebar-foot"><a href="/account">← Личный кабинет</a><a href="/platform">Состояние платформы</a><a className="admin-logout" href={logoutHref}>↪ Выйти из системы</a></div>
     </aside>
 
     <section className="admin-main">

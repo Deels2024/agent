@@ -11,6 +11,7 @@ services:
       WRANGLER_SEND_METRICS: "false"
       WRANGLER_LOG_PATH: /app/.wrangler/logs
       WRANGLER_STATE_DIR: /app/.wrangler/state
+      AUTH_MODE: ${AUTH_MODE:-standalone}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-gpt-5.4-nano}
       WB_API_TOKEN: ${WB_API_TOKEN:-}

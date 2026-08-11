@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { requireChatGPTUser } from "../chatgpt-auth";
+import { authSignOutPath, requireAuthenticatedUser } from "../chatgpt-auth";
 import { hasCurrentLegalAcceptances } from "../../lib/legal";
 import RegistrationForm from "./registration-form";
 
@@ -14,11 +14,11 @@ export default async function RegistrationPage({ searchParams }: { searchParams:
 }
 
 async function RegistrationSession({ returnTo }: { returnTo: string }) {
-  const user = await requireChatGPTUser(`/register?return_to=${encodeURIComponent(returnTo)}`);
+  const user = await requireAuthenticatedUser(`/register?return_to=${encodeURIComponent(returnTo)}`);
   try {
     if (await hasCurrentLegalAcceptances(user.email, "buyer")) redirect(returnTo);
   } catch {
     // Форма регистрации сама покажет понятную ошибку, если хранилище недоступно.
   }
-  return <RegistrationForm name={user.displayName} email={user.email} returnTo={returnTo} />;
+  return <RegistrationForm name={user.displayName} email={user.email} returnTo={returnTo} logoutHref={authSignOutPath(user.provider)} />;
 }

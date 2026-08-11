@@ -8,7 +8,7 @@ import { writeAudit } from "../../../../lib/audit";
 import { enforceRateLimit } from "../../../../lib/security";
 
 export async function POST(request: Request) {
-  const identity = requireRequestIdentity(request);
+  const identity = await requireRequestIdentity(request);
   if (identity instanceof Response) return identity;
   try {
     await ensureMarketplaceSchema();

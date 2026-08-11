@@ -7,7 +7,7 @@ import { getLegalStatus, registrationDocumentSummary } from "../../../../lib/leg
 import { writeAudit } from "../../../../lib/audit";
 
 export async function POST(request: Request) {
-  const identity = requireRequestIdentity(request);
+  const identity = await requireRequestIdentity(request);
   if (identity instanceof Response) return identity;
   try {
     await ensureMarketplaceSchema();
