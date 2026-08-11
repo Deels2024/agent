@@ -7,7 +7,7 @@ function scopeFromUrl(request: Request): LegalScope {
 }
 
 export async function GET(request: Request) {
-  const identity = requireRequestIdentity(request);
+  const identity = await requireRequestIdentity(request);
   if (identity instanceof Response) return identity;
   try {
     return Response.json({ legal: await getLegalStatus(identity.email, scopeFromUrl(request)) });
@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const identity = requireRequestIdentity(request);
+  const identity = await requireRequestIdentity(request);
   if (identity instanceof Response) return identity;
   try {
     const body = await request.json() as { scope?: LegalScope; acceptances?: SubmittedAcceptance[] };
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const identity = requireRequestIdentity(request);
+  const identity = await requireRequestIdentity(request);
   if (identity instanceof Response) return identity;
   try {
     await revokeMarketingConsent(request, identity.email);

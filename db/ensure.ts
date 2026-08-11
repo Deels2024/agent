@@ -73,6 +73,26 @@ export function ensureMarketplaceSchema() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     runtime.DB.prepare("CREATE INDEX IF NOT EXISTS users_role_status_idx ON users (role, status)"),
+    runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS auth_credentials (
+      email TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      password_salt TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      password_iterations INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS auth_credentials_status_idx ON auth_credentials (status)"),
+    runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS auth_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at TEXT NOT NULL,
+      user_agent_hash TEXT
+    )`),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS auth_sessions_user_idx ON auth_sessions (user_email, created_at)"),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS auth_sessions_expires_idx ON auth_sessions (expires_at)"),
     runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS legal_acceptances (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_email TEXT NOT NULL,

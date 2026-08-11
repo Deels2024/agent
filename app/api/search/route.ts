@@ -32,7 +32,7 @@ async function execute(request: Request, payload: SearchPayload) {
   }
 
   const result = await searchMarketplaces(input);
-  const identity = requestIdentity(request);
+  const identity = await requestIdentity(request);
   let searchId: number | null = null;
   let persistence: "saved" | "unavailable" = "saved";
   let responseOffers = result.offers.map((offer) => ({ ...offer, quoteId: null as string | null }));

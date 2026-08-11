@@ -16,8 +16,8 @@ const context = {
   passThroughOnException() {},
 };
 
-async function request(path, init) {
-  return worker.fetch(new Request(`http://localhost${path}`, init), env, context);
+async function request(path, init, environment = env) {
+  return worker.fetch(new Request(`http://localhost${path}`, init), environment, context);
 }
 
 for (const [path, expected] of [
@@ -56,6 +56,30 @@ test("home header exposes a direct personal account entry", async () => {
   const html = await response.text();
   assert.match(html, /href=["']\/account["']/i);
   assert.match(html, /Личный кабинет/i);
+});
+
+test("standalone account entry redirects to the built-in login instead of a ChatGPT-only route", async () => {
+  const response = await request("/account", { headers: { accept: "text/html" }, redirect: "manual" }, { ...env, AUTH_MODE: "standalone" });
+  assert.equal(response.status, 307);
+  assert.equal(new URL(response.headers.get("location"), "http://localhost").pathname, "/login");
+  assert.equal(new URL(response.headers.get("location"), "http://localhost").searchParams.get("return_to"), "/account");
+});
+
+test("standalone login route renders the email and password form", async () => {
+  const response = await request("/login", { headers: { accept: "text/html" } }, { ...env, AUTH_MODE: "standalone" });
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Войти в кабинет/i);
+  assert.match(html, /type=["']password["']/i);
+  assert.doesNotMatch(html, /signin-with-chatgpt/i);
+});
+
+test("standalone mode never trusts a spoofed ChatGPT identity header", async () => {
+  const response = await request("/api/admin/overview", {
+    headers: { "oai-authenticated-user-email": "admin@example.test" },
+  }, { ...env, AUTH_MODE: "standalone", ADMIN_EMAILS: "admin@example.test" });
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).code, "authentication_required");
 });
 
 test("GET /api/platform/status reports all commercial modules honestly", async () => {

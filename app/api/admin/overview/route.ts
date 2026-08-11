@@ -4,7 +4,7 @@ import { ensureMarketplaceSchema } from "../../../../db/ensure";
 import { platformModules, platformSummary } from "../../../../lib/platform";
 
 export async function GET(request: Request) {
-  const identity = requireAdmin(request);
+  const identity = await requireAdmin(request);
   if (identity instanceof Response) return identity;
   try {
     await ensureMarketplaceSchema();

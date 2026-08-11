@@ -1,6 +1,8 @@
 import { ensureMarketplaceSchema } from "../db/ensure";
 import { runtimeEnv, runtimeValue } from "./runtime";
 import { getLegalStatus, type LegalScope } from "./legal";
+import { rejectUntrustedMutation } from "./request-security";
+import { authMode, standaloneUserFromHeaders } from "./standalone-auth";
 
 export type AppRole = "buyer" | "seller" | "admin";
 
@@ -26,7 +28,13 @@ export function adminEmails() {
   return new Set((runtimeValue("ADMIN_EMAILS") ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean));
 }
 
-export function requestIdentity(request: Request): RequestIdentity | null {
+export async function requestIdentity(request: Request): Promise<RequestIdentity | null> {
+  if (authMode() === "standalone") {
+    const user = await standaloneUserFromHeaders(request.headers);
+    if (!user) return null;
+    const role: AppRole = adminEmails().has(user.email) ? "admin" : "buyer";
+    return { email: user.email, displayName: user.displayName, role };
+  }
   const forwardedEmail = normalizeEmail(request.headers.get("oai-authenticated-user-email"));
   const developmentEmail = process.env.NODE_ENV === "production" ? null : normalizeEmail(runtimeValue("DEV_USER_EMAIL"));
   const email = forwardedEmail ?? developmentEmail;
@@ -35,26 +43,16 @@ export function requestIdentity(request: Request): RequestIdentity | null {
   return { email, displayName: decodeName(request) ?? email.split("@")[0], role };
 }
 
-export function requireRequestIdentity(request: Request): RequestIdentity | Response {
-  if (!["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase())) {
-    const origin = request.headers.get("origin");
-    const fetchSite = request.headers.get("sec-fetch-site");
-    if (origin) {
-      try {
-        if (new URL(origin).origin !== new URL(request.url).origin) return Response.json({ error: "Запрос отклонён защитой источника", code: "untrusted_origin" }, { status: 403 });
-      } catch {
-        return Response.json({ error: "Некорректный источник запроса", code: "untrusted_origin" }, { status: 403 });
-      }
-    }
-    if (fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite)) return Response.json({ error: "Запрос с другого сайта запрещён", code: "cross_site_request" }, { status: 403 });
-  }
-  const identity = requestIdentity(request);
+export async function requireRequestIdentity(request: Request): Promise<RequestIdentity | Response> {
+  const rejected = rejectUntrustedMutation(request);
+  if (rejected) return rejected;
+  const identity = await requestIdentity(request);
   if (identity) return identity;
   return Response.json({ error: "Нужно войти в аккаунт", code: "authentication_required" }, { status: 401 });
 }
 
 export async function requireActiveRequestIdentity(request: Request, legalScope: LegalScope = "buyer"): Promise<RequestIdentity | Response> {
-  const identity = requireRequestIdentity(request);
+  const identity = await requireRequestIdentity(request);
   if (identity instanceof Response) return identity;
   const env = runtimeEnv() as { DB?: D1Database };
   if (!env.DB) return identity;
@@ -73,8 +71,8 @@ export async function requireActiveRequestIdentity(request: Request, legalScope:
   }
 }
 
-export function requireAdmin(request: Request): RequestIdentity | Response {
-  const identity = requireRequestIdentity(request);
+export async function requireAdmin(request: Request): Promise<RequestIdentity | Response> {
+  const identity = await requireRequestIdentity(request);
   if (identity instanceof Response) return identity;
   if (!adminEmails().has(identity.email)) {
     return Response.json({ error: "Недостаточно прав", code: "admin_required" }, { status: 403 });
