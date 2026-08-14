@@ -30,7 +30,7 @@ type CredentialRow = {
 };
 
 export function authMode(): AuthMode {
-  return runtimeValue("AUTH_MODE")?.toLowerCase() === "standalone" ? "standalone" : "chatgpt";
+  return runtimeValue("AUTH_MODE")?.toLowerCase() === "chatgpt" ? "chatgpt" : "standalone";
 }
 
 export function normalizeAuthEmail(value: unknown) {

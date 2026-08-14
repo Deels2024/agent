@@ -44,7 +44,7 @@ for (const path of ["/prototype", "/backend", "/platform"]) {
   });
 
   test(`GET ${path} is available only to configured administrators`, async () => {
-    const response = await request(path, { headers: { accept: "text/html", "oai-authenticated-user-email": "admin@example.test" } }, { ...env, ADMIN_EMAILS: "admin@example.test" });
+    const response = await request(path, { headers: { accept: "text/html", "oai-authenticated-user-email": "admin@example.test" } }, { ...env, AUTH_MODE: "chatgpt", ADMIN_EMAILS: "admin@example.test" });
     assert.equal(response.status, 200);
   });
 }
@@ -72,8 +72,8 @@ test("home header shows an honest sign-in entry for an anonymous visitor", async
   assert.doesNotMatch(html, /customer-avatar[^>]*>С</i);
 });
 
-test("GET /api/auth/session reports the forwarded signed-in user without exposing secrets", async () => {
-  const response = await request("/api/auth/session", { headers: { "oai-authenticated-user-email": "buyer@example.test", "oai-authenticated-user-full-name": "%D0%90%D0%BD%D0%BD%D0%B0", "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8" } });
+test("GET /api/auth/session reports the forwarded signed-in user without exposing secrets in ChatGPT mode", async () => {
+  const response = await request("/api/auth/session", { headers: { "oai-authenticated-user-email": "buyer@example.test", "oai-authenticated-user-full-name": "%D0%90%D0%BD%D0%BD%D0%B0", "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8" } }, { ...env, AUTH_MODE: "chatgpt" });
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.authenticated, true);
@@ -82,15 +82,15 @@ test("GET /api/auth/session reports the forwarded signed-in user without exposin
   assert.deepEqual(Object.keys(payload.user).sort(), ["displayName", "email", "role"]);
 });
 
-test("standalone account entry redirects to the built-in login instead of a ChatGPT-only route", async () => {
-  const response = await request("/account", { headers: { accept: "text/html" }, redirect: "manual" }, { ...env, AUTH_MODE: "standalone" });
+test("account entry defaults to the built-in login instead of a ChatGPT-only route", async () => {
+  const response = await request("/account", { headers: { accept: "text/html" }, redirect: "manual" });
   assert.equal(response.status, 307);
   assert.equal(new URL(response.headers.get("location"), "http://localhost").pathname, "/login");
   assert.equal(new URL(response.headers.get("location"), "http://localhost").searchParams.get("return_to"), "/account");
 });
 
-test("standalone login route renders the email and password form", async () => {
-  const response = await request("/login", { headers: { accept: "text/html" } }, { ...env, AUTH_MODE: "standalone" });
+test("default login route renders the email and password form", async () => {
+  const response = await request("/login", { headers: { accept: "text/html" } });
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /Войти в кабинет/i);
@@ -107,7 +107,7 @@ test("standalone mode never trusts a spoofed ChatGPT identity header", async () 
 });
 
 test("GET /api/platform/status reports all commercial modules honestly", async () => {
-  const response = await request("/api/platform/status", { headers: { "oai-authenticated-user-email": "admin@example.test" } }, { ...env, ADMIN_EMAILS: "admin@example.test" });
+  const response = await request("/api/platform/status", { headers: { "oai-authenticated-user-email": "admin@example.test" } }, { ...env, AUTH_MODE: "chatgpt", ADMIN_EMAILS: "admin@example.test" });
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.summary.total, 15);
@@ -140,7 +140,7 @@ test("payment and delivery webhooks reject unsigned events", async () => {
 });
 
 test("GET /api/marketplaces/status exposes honest configuration state", async () => {
-  const response = await request("/api/marketplaces/status", { headers: { "oai-authenticated-user-email": "admin@example.test" } }, { ...env, ADMIN_EMAILS: "admin@example.test" });
+  const response = await request("/api/marketplaces/status", { headers: { "oai-authenticated-user-email": "admin@example.test" } }, { ...env, AUTH_MODE: "chatgpt", ADMIN_EMAILS: "admin@example.test" });
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.total, 4);
@@ -149,7 +149,7 @@ test("GET /api/marketplaces/status exposes honest configuration state", async ()
 });
 
 test("GET /admin does not expose administrative data to a regular user", async () => {
-  const response = await request("/admin", { headers: { accept: "text/html", "oai-authenticated-user-email": "buyer@example.test" } });
+  const response = await request("/admin", { headers: { accept: "text/html", "oai-authenticated-user-email": "buyer@example.test" } }, { ...env, AUTH_MODE: "chatgpt" });
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /Доступ только для администратора/i);
@@ -157,7 +157,7 @@ test("GET /admin does not expose administrative data to a regular user", async (
 });
 
 test("admin API rejects an authenticated user without allowlist access", async () => {
-  const response = await request("/api/admin/operations", { headers: { "oai-authenticated-user-email": "buyer@example.test" } });
+  const response = await request("/api/admin/operations", { headers: { "oai-authenticated-user-email": "buyer@example.test" } }, { ...env, AUTH_MODE: "chatgpt" });
   assert.equal(response.status, 403);
   assert.equal((await response.json()).code, "admin_required");
 });
@@ -173,10 +173,26 @@ test("POST /api/search returns ranked demo offers without external credentials",
   assert.equal(payload.demo, true);
   assert.equal(payload.persistence, "unavailable");
   assert.equal(payload.offers.length, 3);
+  assert.equal(payload.offers.every((offer) => offer.score === 0), true);
+  assert.equal(payload.offers.every((offer) => offer.verified === false), true);
+  assert.equal(payload.offers.every((offer) => offer.oldPrice === undefined), true);
   assert.deepEqual(
     payload.offers.map((offer) => offer.price),
     [...payload.offers].map((offer) => offer.price).sort((a, b) => a - b),
   );
+});
+
+test("demo catalog does not show an implausibly cheap premium phone", async () => {
+  const response = await request("/api/search", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query: "Apple iPhone 15 Pro 256 GB", mode: "text", limit: 10 }),
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.demo, true);
+  assert.equal(payload.offers[0].productName, "Apple iPhone 15 Pro 256 GB");
+  assert.ok(payload.offers[0].price >= 90_000);
 });
 
 test("GET /api/history requires identity before reading saved searches", async () => {
@@ -186,7 +202,7 @@ test("GET /api/history requires identity before reading saved searches", async (
 });
 
 test("authenticated mutations reject cross-site browser requests", async () => {
-  const response = await request("/api/account/bootstrap", { method: "POST", headers: { "oai-authenticated-user-email": "buyer@example.test", origin: "https://evil.example", "sec-fetch-site": "cross-site" } });
+  const response = await request("/api/account/bootstrap", { method: "POST", headers: { "oai-authenticated-user-email": "buyer@example.test", origin: "https://evil.example", "sec-fetch-site": "cross-site" } }, { ...env, AUTH_MODE: "chatgpt" });
   assert.equal(response.status, 403);
   assert.equal((await response.json()).code, "untrusted_origin");
 });

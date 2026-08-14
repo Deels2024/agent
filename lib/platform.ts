@@ -19,6 +19,8 @@ function configured(required: string[]) {
 
 export function platformModules(): PlatformModule[] {
   const dbReady = hasRuntimeBinding("DB");
+  const standaloneAuth = (runtimeValue("AUTH_MODE") ?? "standalone").toLowerCase() !== "chatgpt";
+  const identityReady = standaloneAuth ? dbReady : true;
   const paymentProvider = runtimeValue("PAYMENT_PROVIDER");
   const paymentModel = runtimeValue("PAYMENT_MODEL");
   const paymentModelReady = ["seller_direct", "bank_safe_deal", "split_payment"].includes(paymentModel ?? "");
@@ -26,7 +28,7 @@ export function platformModules(): PlatformModule[] {
   const paymentSandbox = paymentProvider === "sandbox";
   const legalReady = runtimeValue("LEGAL_OPERATOR_REQUISITES_CONFIRMED") === "true" && runtimeValue("PRIVACY_PROCESSORS_CONFIRMED") === "true";
   const modules: PlatformModule[] = [
-    { id: 1, key: "identity", title: "Вход покупателей и продавцов", description: "Серверная идентификация, профиль и защищённые операции.", status: "ready", implemented: true, missing: [], route: "/account" },
+    { id: 1, key: "identity", title: "Вход покупателей и продавцов", description: "Серверная идентификация, профиль и защищённые операции.", status: identityReady ? "ready" : "needs_configuration", implemented: true, missing: identityReady ? [] : ["DB"], route: "/account" },
     { id: 2, key: "roles", title: "Роли и права", description: "Покупатель, продавец и администратор с проверкой прав на сервере.", status: hasRuntimeValue("ADMIN_EMAILS") ? "ready" : "needs_configuration", implemented: true, missing: hasRuntimeValue("ADMIN_EMAILS") ? [] : ["ADMIN_EMAILS"] },
     { id: 3, key: "seller", title: "Кабинет продавца", description: "Профиль магазина, ассортимент, остатки и подключения площадок.", status: dbReady ? "ready" : "needs_configuration", implemented: true, missing: dbReady ? [] : ["DB"], route: "/seller" },
     { id: 4, key: "credentials", title: "Защита ключей продавцов", description: "Ключи сохраняются только в зашифрованном виде и никогда не возвращаются в интерфейс.", status: hasRuntimeValue("CREDENTIAL_ENCRYPTION_KEY") ? "ready" : "needs_configuration", implemented: true, missing: hasRuntimeValue("CREDENTIAL_ENCRYPTION_KEY") ? [] : ["CREDENTIAL_ENCRYPTION_KEY"] },

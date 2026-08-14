@@ -72,7 +72,7 @@ export default function LoginForm({ returnTo, initialMode }: { returnTo: string;
         {verificationNeeded && <button type="button" className="auth-resend-button" disabled={busy} onClick={() => void resendVerification()}>Отправить письмо подтверждения повторно</button>}
         {info && <div className="auth-success" role="status">{info}</div>}
         <button className="auth-submit" disabled={busy}>{busy ? "Подождите…" : mode === "login" ? "Войти" : "Создать аккаунт"}</button>
-        <small className="auth-security">Защищённая HttpOnly-сессия · пароль хешируется PBKDF2 · данные не передаются ChatGPT</small>
+        <small className="auth-security">Защищённая HttpOnly-сессия · пароль хранится только в виде стойкого хеша · данные входа не передаются сторонним сервисам</small>
       </form>
     </section>
   </main>;

@@ -60,21 +60,25 @@ export default function AdminDashboard({ initialName, initialEmail, logoutHref }
   const resolutionDialogRef = useAccessibleDialog(Boolean(pendingResolution), closeResolutionDialog);
 
   const load = useCallback(async () => {
-    const [overviewResponse, sellersResponse, operationsResponse] = await Promise.all([
-      fetch("/api/admin/overview"), fetch("/api/admin/sellers"), fetch("/api/admin/operations"),
-    ]);
-    if ([overviewResponse, sellersResponse, operationsResponse].some((response) => response.status === 403)) {
-      setNotice("Доступ администратора отозван. Выйдите и войдите снова."); return;
+    try {
+      const [overviewResponse, sellersResponse, operationsResponse] = await Promise.all([
+        fetch("/api/admin/overview"), fetch("/api/admin/sellers"), fetch("/api/admin/operations"),
+      ]);
+      if ([overviewResponse, sellersResponse, operationsResponse].some((response) => response.status === 403)) {
+        setNotice("Доступ администратора отозван. Выйдите и войдите снова."); return;
+      }
+      if (!overviewResponse.ok || !sellersResponse.ok || !operationsResponse.ok) {
+        setNotice("Не удалось загрузить часть данных. Проверьте подключение базы и обновите страницу."); return;
+      }
+      const overview = await overviewResponse.json() as { metrics: Metrics; platform: { modules: Module[] } };
+      const sellerData = await sellersResponse.json() as { sellers: Seller[] };
+      const operations = await operationsResponse.json() as { users: User[]; orders: Order[]; disputes: Dispute[]; risks: Risk[]; audits: Audit[] };
+      setMetrics(overview.metrics); setModules(overview.platform.modules); setSellers(sellerData.sellers);
+      setUsers(operations.users); setOrders(operations.orders); setDisputes(operations.disputes); setRisks(operations.risks); setAudits(operations.audits);
+      setNotice("");
+    } catch {
+      setNotice("Нет связи с сервером. Данные не изменены — проверьте интернет и повторите загрузку.");
     }
-    if (!overviewResponse.ok || !sellersResponse.ok || !operationsResponse.ok) {
-      setNotice("Не удалось загрузить часть данных. Проверьте подключение базы и обновите страницу."); return;
-    }
-    const overview = await overviewResponse.json() as { metrics: Metrics; platform: { modules: Module[] } };
-    const sellerData = await sellersResponse.json() as { sellers: Seller[] };
-    const operations = await operationsResponse.json() as { users: User[]; orders: Order[]; disputes: Dispute[]; risks: Risk[]; audits: Audit[] };
-    setMetrics(overview.metrics); setModules(overview.platform.modules); setSellers(sellerData.sellers);
-    setUsers(operations.users); setOrders(operations.orders); setDisputes(operations.disputes); setRisks(operations.risks); setAudits(operations.audits);
-    setNotice("");
   }, []);
 
   useEffect(() => { void Promise.resolve().then(load); }, [load]);
@@ -97,11 +101,16 @@ export default function AdminDashboard({ initialName, initialEmail, logoutHref }
 
   const reviewSeller = async (seller: Seller, status: string, kycStatus: string) => {
     setBusy(true); setNotice("Сохраняем решение по продавцу…");
-    const response = await fetch("/api/admin/sellers", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ sellerId: seller.id, status, kycStatus, riskScore: seller.riskScore, comment: "Решение из веб-админки" }) });
-    const result = await response.json() as { error?: string };
-    setNotice(response.ok ? "Статус продавца обновлён" : result.error ?? "Не удалось обновить продавца");
-    if (response.ok) await load();
-    setBusy(false);
+    try {
+      const response = await fetch("/api/admin/sellers", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ sellerId: seller.id, status, kycStatus, riskScore: seller.riskScore, comment: "Решение из веб-админки" }) });
+      const result = await response.json() as { error?: string };
+      setNotice(response.ok ? "Статус продавца обновлён" : result.error ?? "Не удалось обновить продавца");
+      if (response.ok) await load();
+    } catch {
+      setNotice("Нет связи с сервером. Статус продавца не изменён.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const openResolutionDialog = (item: Dispute, status: PendingResolution["status"]) => {
@@ -125,7 +134,7 @@ export default function AdminDashboard({ initialName, initialEmail, logoutHref }
   return <main className="admin-app">
     <aside className="admin-sidebar">
       <a className="admin-logo" href="/"><span>✦</span><div><b>Агент покупок</b><small>Управление сервисом</small></div></a>
-      <div className="admin-environment"><span></span><div><b>Production</b><small>Защищённая зона</small></div></div>
+      <div className="admin-environment"><span></span><div><b>{activeModules === modules.length && modules.length > 0 ? "Готово к запуску" : "Настройка сервиса"}</b><small>{activeModules} из {modules.length || 15} модулей готовы</small></div></div>
       <nav aria-label="Разделы админ-панели">{nav.map((item) => <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => setSection(item.id)}><span>{item.icon}</span>{item.label}{item.id === "disputes" && metrics.openDisputes > 0 && <em>{metrics.openDisputes}</em>}{item.id === "risk" && metrics.elevatedRisks > 0 && <em>{metrics.elevatedRisks}</em>}</button>)}</nav>
       <div className="admin-sidebar-foot"><a href="/account">← Личный кабинет</a><a href="/platform">Состояние платформы</a><a className="admin-logout" href={logoutHref}>↪ Выйти из системы</a></div>
     </aside>
