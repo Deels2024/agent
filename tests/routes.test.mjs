@@ -23,9 +23,9 @@ async function request(path, init, environment = env) {
 for (const [path, expected] of [
   ["/", "Агент покупок"],
   ["/live-search", "Найдём лучшее предложение"],
-  ["/prototype", "Покупатель"],
-  ["/backend", "Backend маркетплейсов"],
-  ["/platform", "15 модулей"],
+  ["/forgot-password", "Вернём доступ безопасно"],
+  ["/reset-password", "Создайте новый пароль"],
+  ["/verify-email", "Защитите свой аккаунт"],
   ["/legal", "Все правила — открыто"],
   ["/legal/buyer-agency-offer", "Публичная оферта на агентские"],
 ]) {
@@ -34,6 +34,18 @@ for (const [path, expected] of [
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
     assert.match(await response.text(), new RegExp(expected, "i"));
+  });
+}
+
+for (const path of ["/prototype", "/backend", "/platform"]) {
+  test(`GET ${path} is hidden from anonymous visitors`, async () => {
+    const response = await request(path, { headers: { accept: "text/html" }, redirect: "manual" });
+    assert.equal(response.status, 307);
+  });
+
+  test(`GET ${path} is available only to configured administrators`, async () => {
+    const response = await request(path, { headers: { accept: "text/html", "oai-authenticated-user-email": "admin@example.test" } }, { ...env, ADMIN_EMAILS: "admin@example.test" });
+    assert.equal(response.status, 200);
   });
 }
 
@@ -47,8 +59,8 @@ test("GET /api/health reports only configured capabilities", async () => {
   assert.equal(payload.capabilities.persistentSearches, false);
   assert.equal(payload.capabilities.accounts, false);
   assert.equal(payload.runtime.database, "unavailable");
-  assert.equal(payload.marketplaces.length, 4);
-  assert.equal(payload.platform.total, 15);
+  assert.equal("marketplaces" in payload, false);
+  assert.equal("platform" in payload, false);
 });
 
 test("home header exposes a direct personal account entry", async () => {
@@ -83,7 +95,7 @@ test("standalone mode never trusts a spoofed ChatGPT identity header", async () 
 });
 
 test("GET /api/platform/status reports all commercial modules honestly", async () => {
-  const response = await request("/api/platform/status");
+  const response = await request("/api/platform/status", { headers: { "oai-authenticated-user-email": "admin@example.test" } }, { ...env, ADMIN_EMAILS: "admin@example.test" });
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.summary.total, 15);
@@ -116,7 +128,7 @@ test("payment and delivery webhooks reject unsigned events", async () => {
 });
 
 test("GET /api/marketplaces/status exposes honest configuration state", async () => {
-  const response = await request("/api/marketplaces/status");
+  const response = await request("/api/marketplaces/status", { headers: { "oai-authenticated-user-email": "admin@example.test" } }, { ...env, ADMIN_EMAILS: "admin@example.test" });
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.total, 4);

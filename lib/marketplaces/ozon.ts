@@ -46,6 +46,7 @@ async function search(input: SearchInput): Promise<NormalizedOffer[]> {
   }).slice(0, input.limit * 2).map((item): NormalizedOffer => {
     const productId = String(item.id ?? item.product_id ?? item.offer_id ?? crypto.randomUUID());
     const barcodes = Array.isArray(item.barcodes) ? item.barcodes.map(String) : [];
+    const images = Array.isArray(item.images) ? item.images.map(String) : [];
     const price = numberFrom(item.marketing_price || item.price || item.min_price);
     const oldPrice = numberFrom(item.old_price);
     return {
@@ -62,6 +63,10 @@ async function search(input: SearchInput): Promise<NormalizedOffer[]> {
       score: 0,
       url: `https://www.ozon.ru/search/?text=${encodeURIComponent(String(item.name || input.query))}`,
       barcode: barcodes[0],
+      model: String(item.name || "") || undefined,
+      mpn: String(item.offer_id || "") || undefined,
+      imageUrl: String(item.primary_image || images[0] || "") || undefined,
+      updatedAt: new Date().toISOString(),
       verified: true,
     };
   });

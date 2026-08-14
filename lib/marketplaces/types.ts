@@ -17,6 +17,8 @@ export type SearchInput = {
   limit: number;
 };
 
+export type MatchLevel = "exact" | "likely" | "uncertain";
+
 export type NormalizedOffer = {
   id: string;
   provider: MarketplaceId | "demo";
@@ -35,6 +37,18 @@ export type NormalizedOffer = {
   inventoryItemId?: number;
   url?: string;
   barcode?: string;
+  brand?: string;
+  model?: string;
+  mpn?: string;
+  imageUrl?: string;
+  warrantyMonths?: number;
+  returnDays?: number;
+  sellerRating?: number;
+  reviewCount?: number;
+  updatedAt?: string;
+  matchLevel?: MatchLevel;
+  matchReasons?: string[];
+  variantMismatch?: boolean;
   verified: boolean;
 };
 

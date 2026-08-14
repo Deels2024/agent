@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     const body = await request.json() as { email?: unknown; displayName?: unknown; password?: unknown };
     const result = await registerStandaloneUser(request, body);
     if (!result.ok) return Response.json({ error: result.error }, { status: result.status });
-    return Response.json({ user: result.user }, { status: result.status, headers: { "set-cookie": result.cookie, "cache-control": "no-store" } });
+    return Response.json({ user: result.user, verificationQueued: result.verificationQueued }, { status: result.status, headers: { "set-cookie": result.cookie, "cache-control": "no-store" } });
   } catch {
     return Response.json({ error: "Регистрация временно недоступна. Повторите немного позже." }, { status: 503 });
   }

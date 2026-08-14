@@ -224,12 +224,12 @@ export default function Home() {
     {tab === "search" && <>
       <section className="customer-hero">
         <div className="customer-hero-copy"><span className="customer-kicker">Личный агент выгодной покупки</span><h1>Найдём дешевле.<br />Проверим всё важное.</h1><p>Один поиск по маркетплейсам и небольшим магазинам — с итоговой ценой, доставкой, надёжностью продавца и защитой покупки.</p></div>
-        <form className="customer-search" action="/live-search" method="get"><label htmlFor="customer-query">Что хотите купить?</label><div><input id="customer-query" name="q" defaultValue="Apple AirPods Pro 2 USB-C" placeholder="Название, модель или штрих-код" /><button type="submit">Найти лучшее</button></div><p><a href="/live-search?mode=photo">▣ По фото</a><a href="/live-search?mode=barcode">▥ По штрих-коду</a><span>До 10 проверенных вариантов</span></p></form>
+        <form className="customer-search" action="/live-search" method="get"><label htmlFor="customer-query">Что хотите купить?</label><div><input id="customer-query" name="q" placeholder="Например, Samsung QE65Q80D 65″" /><button type="submit">Найти лучшее</button></div><p><a href="/live-search?mode=photo">▣ По фото</a><a href="/live-search?mode=barcode">▥ По штрих-коду</a><span>До 10 проверенных вариантов</span></p></form>
         <div className="customer-proof"><span><b>Итоговая цена</b><small>товар + доставка</small></span><span><b>Проверка продавца</b><small>рейтинг и гарантии</small></span><span><b>Контроль после покупки</b><small>цена, возврат, поддержка</small></span></div>
       </section>
       <section className="customer-content">
         <div className="customer-section-title"><div><span className="customer-kicker">Почему это удобно</span><h2>Агент делает сложное за вас</h2></div><a href="/live-search">Проверить реальный поиск →</a></div>
-        <div className="benefit-grid"><article><span>01</span><h3>Узнаёт точную модель</h3><p>По названию, фотографии, ссылке или штрих-коду. Перед поиском вы подтверждаете результат.</p></article><article><span>02</span><h3>Считает настоящую выгоду</h3><p>Сравнивает итог к оплате, сроки, гарантию и надёжность, а не только цену в карточке.</p></article><article><span>03</span><h3>Подключает малые магазины</h3><p>Проверенные продавцы могут предложить цену лучше маркетплейсов через безопасную сделку.</p></article></div>
+        <div className="benefit-grid"><article><span>01</span><h3>Узнаёт точную модель</h3><p>По названию, фотографии или штрих-коду. Перед поиском вы подтверждаете результат.</p></article><article><span>02</span><h3>Считает настоящую выгоду</h3><p>Сравнивает итог к оплате, сроки, гарантию и надёжность, а не только цену в карточке.</p></article><article><span>03</span><h3>Подключает малые магазины</h3><p>Проверенные продавцы могут предложить цену лучше маркетплейсов через безопасную сделку.</p></article></div>
         <section className="trust-strip"><div><span>◇</span><h3>Понятно, почему предложение лучшее</h3><p>Для каждой рекомендации показываем свежесть цены, совпадение модели, условия возврата и причину оценки.</p></div><a href="/live-search">Найти товар</a></section>
       </section>
     </>}
@@ -242,6 +242,6 @@ export default function Home() {
 
     {tab === "profile" && <section className="customer-dashboard"><div className="profile-banner"><span className="customer-avatar large">○</span><div><h1>Ваш профиль</h1><p>Имя, тариф и данные появятся после защищённого входа</p></div></div><article className="customer-account-gateway"><span>○</span><div><h2>Личный кабинет</h2><p>Управляйте покупками, запросами магазинам, уведомлениями, подпиской и выходом из аккаунта.</p></div><a href="/account">Войти в кабинет →</a></article></section>}
 
-    <footer className="customer-footer"><span>Агент покупок · честный выбор без скрытой наценки</span><div><a href="/account">Личный кабинет</a><a href="/seller">Продавцам</a><a href="/platform">15 модулей запуска</a><a href="/legal">Документы</a><a href="/backend">Интеграции</a></div></footer>
+    <footer className="customer-footer"><span>Агент покупок · честный выбор без скрытой наценки</span><div><a href="/account">Личный кабинет</a><a href="/seller">Продавцам</a><a href="/legal">Документы</a><a href="/legal/privacy-policy">Конфиденциальность</a></div></footer>
   </main>;
 }

@@ -1,11 +1,8 @@
 import { ensureMarketplaceSchema } from "../../../db/ensure";
 import { hasRuntimeValue, runtimeEnv } from "../../../lib/runtime";
-import { marketplaceStatuses } from "../../../lib/marketplaces";
-import { platformSummary } from "../../../lib/platform";
 import { authMode } from "../../../lib/standalone-auth";
 
 export async function GET() {
-  const marketplaces = marketplaceStatuses();
   const databaseReady = await databaseIsReady();
   return Response.json({
     ok: true,
@@ -30,8 +27,6 @@ export async function GET() {
       paymentGateway: hasRuntimeValue("PAYMENT_PROVIDER") && hasRuntimeValue("PAYMENT_API_KEY"),
       notifications: hasRuntimeValue("NOTIFICATION_WEBHOOK_URL") && hasRuntimeValue("NOTIFICATION_WEBHOOK_SECRET"),
     },
-    marketplaces,
-    platform: platformSummary(),
   });
 }
 

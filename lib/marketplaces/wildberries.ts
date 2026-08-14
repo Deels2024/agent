@@ -63,6 +63,7 @@ async function search(input: SearchInput): Promise<NormalizedOffer[]> {
     const price = numberFrom(priceInfo.discountedPrice || priceInfo.clubDiscountedPrice || priceInfo.price);
     const sizes = Array.isArray(card.sizes) ? card.sizes as Array<Record<string, unknown>> : [];
     const barcode = sizes.flatMap((size) => Array.isArray(size.skus) ? size.skus.map(String) : [])[0];
+    const photos = Array.isArray(card.photos) ? card.photos as Array<Record<string, unknown>> : [];
     return {
       id: `wildberries:${nmId}`,
       provider: "wildberries",
@@ -77,6 +78,11 @@ async function search(input: SearchInput): Promise<NormalizedOffer[]> {
       score: 0,
       url: `https://www.wildberries.ru/catalog/${nmId}/detail.aspx`,
       barcode,
+      brand: String(card.brand || "") || undefined,
+      model: String(card.title || "") || undefined,
+      mpn: String(card.vendorCode || "") || undefined,
+      imageUrl: String(photos[0]?.big || photos[0]?.c516x688 || "") || undefined,
+      updatedAt: new Date().toISOString(),
       verified: true,
     };
   });

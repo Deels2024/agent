@@ -1,10 +1,11 @@
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { ensureMarketplaceSchema } from "../../../db/ensure";
-import { notifications, priceAlerts } from "../../../db/schema";
+import { authCredentials, notifications, priceAlerts } from "../../../db/schema";
 import { requireActiveRequestIdentity } from "../../../lib/auth";
 import { writeAudit } from "../../../lib/audit";
 import { cleanText, enforceRateLimit } from "../../../lib/security";
+import { hasRuntimeValue } from "../../../lib/runtime";
 
 export async function GET(request: Request) {
   const identity = await requireActiveRequestIdentity(request);
@@ -30,6 +31,11 @@ export async function POST(request: Request) {
     const targetPrice = Number(body.targetPrice);
     const channel = ["in_app", "email", "sms", "push"].includes(String(body.channel)) ? String(body.channel) : "in_app";
     if (query.length < 2 || !Number.isFinite(targetPrice) || targetPrice <= 0) return Response.json({ error: "Укажите товар и целевую цену" }, { status: 400 });
+    if (channel !== "in_app" && !hasRuntimeValue("NOTIFICATION_WEBHOOK_URL")) return Response.json({ error: "Внешняя отправка ещё не подключена. Выберите уведомление в личном кабинете." }, { status: 503 });
+    if (channel === "email") {
+      const [credential] = await getDb().select({ emailVerifiedAt: authCredentials.emailVerifiedAt }).from(authCredentials).where(eq(authCredentials.email, identity.email)).limit(1);
+      if (credential && !credential.emailVerifiedAt) return Response.json({ error: "Сначала подтвердите email в профиле" }, { status: 400 });
+    }
     const [alert] = await getDb().insert(priceAlerts).values({ userEmail: identity.email, query, targetPrice: Math.round(targetPrice * 100) / 100, channel }).returning();
     await getDb().insert(notifications).values({ recipientEmail: identity.email, channel: "in_app", template: "price_alert_created", payloadJson: JSON.stringify({ alertId: alert.id, query, targetPrice }) });
     await writeAudit(request, { actorEmail: identity.email, action: "price_alert.created", entityType: "price_alert", entityId: alert.id });
