@@ -1,7 +1,8 @@
 "use client";
 /* eslint-disable @next/next/no-html-link-for-pages */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useHashSection } from "./ui/use-hash-section";
 
 type Role = "buyer" | "seller" | "admin";
 type Screen = { id: string; title: string; group: string };
@@ -207,41 +208,59 @@ const customerTabs: Array<{ id: CustomerTab; label: string; icon: string }> = [
   { id: "help", label: "Помощь", icon: "?" },
   { id: "profile", label: "Профиль", icon: "○" },
 ];
+const customerTabIds = customerTabs.map((item) => item.id);
+type PublicSession = { authenticated: boolean; user: { displayName: string; email: string; role: string } | null };
 
 export default function Home() {
-  const [tab, setTab] = useState<CustomerTab>("search");
+  const [tab, setTab] = useHashSection<CustomerTab>("search", customerTabIds);
+  const [session, setSession] = useState<PublicSession | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/auth/session", { headers: { accept: "application/json" } })
+      .then((response) => response.ok ? response.json() as Promise<PublicSession> : null)
+      .then((value) => { if (active && value) setSession(value); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
+  const accountHref = session?.authenticated ? "/account" : "/login?return_to=%2Faccount";
+  const accountSectionHref = (section: string) => session?.authenticated ? `/account#${section}` : `/login?return_to=${encodeURIComponent(`/account#${section}`)}`;
+  const accountName = session?.user?.displayName?.trim() || "Войти";
+  const accountInitial = session?.user?.displayName?.trim().slice(0, 1).toUpperCase() || "↪";
 
   return <main className="customer-app">
     <header className="customer-header">
-      <button className="customer-brand" onClick={() => setTab("search")}><span>✦</span><b>Агент покупок</b></button>
-      <nav aria-label="Основная навигация">{customerTabs.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav>
-      <a className="customer-account-link" href="/account" aria-label="Открыть личный кабинет">
-        <span className="customer-avatar">С</span>
-        <span><b>Личный кабинет</b><small>Покупки и профиль</small></span>
+      <a className="customer-brand" href="#search" onClick={(event) => { event.preventDefault(); setTab("search"); }}><span aria-hidden="true">✦</span><b>Агент покупок</b></a>
+      <nav aria-label="Основная навигация">{customerTabs.map((item) => <a href={`#${item.id}`} key={item.id} className={tab === item.id ? "active" : ""} aria-current={tab === item.id ? "page" : undefined} onClick={(event) => { event.preventDefault(); setTab(item.id); }}><span aria-hidden="true">{item.icon}</span>{item.label}</a>)}</nav>
+      <a className="customer-account-link" href={accountHref} aria-label={session?.authenticated ? `Открыть кабинет пользователя ${accountName}` : "Войти в личный кабинет"}>
+        <span className="customer-avatar" aria-hidden="true">{accountInitial}</span>
+        <span><b>{accountName}</b><small>{session?.authenticated ? "Покупки и профиль" : "Личный кабинет"}</small></span>
       </a>
     </header>
 
     {tab === "search" && <>
       <section className="customer-hero">
         <div className="customer-hero-copy"><span className="customer-kicker">Личный агент выгодной покупки</span><h1>Найдём дешевле.<br />Проверим всё важное.</h1><p>Один поиск по маркетплейсам и небольшим магазинам — с итоговой ценой, доставкой, надёжностью продавца и защитой покупки.</p></div>
-        <form className="customer-search" action="/live-search" method="get"><label htmlFor="customer-query">Что хотите купить?</label><div><input id="customer-query" name="q" placeholder="Например, Samsung QE65Q80D 65″" /><button type="submit">Найти лучшее</button></div><p><a href="/live-search?mode=photo">▣ По фото</a><a href="/live-search?mode=barcode">▥ По штрих-коду</a><span>До 10 проверенных вариантов</span></p></form>
+        <form className="customer-search" action="/live-search" method="get"><label htmlFor="customer-query">Что хотите купить?</label><div><input id="customer-query" name="q" placeholder="Например, Samsung QE65Q80D 65″" /><button type="submit">Найти лучшее</button></div><p><a href="/live-search?mode=photo">▣ По фото</a><a href="/live-search?mode=barcode">▥ По штрих-коду</a><span>До 10 вариантов после подключения площадок</span></p></form>
+        <aside className="customer-demo-note" aria-label="Статус сервиса"><span aria-hidden="true">i</span><p><b>Сейчас доступен демонстрационный поиск.</b> Реальные цены появятся после подключения официальных доступов площадок; тестовые данные всегда помечены.</p><a href="/live-search">Посмотреть демо</a></aside>
         <div className="customer-proof"><span><b>Итоговая цена</b><small>товар + доставка</small></span><span><b>Проверка продавца</b><small>рейтинг и гарантии</small></span><span><b>Контроль после покупки</b><small>цена, возврат, поддержка</small></span></div>
       </section>
       <section className="customer-content">
-        <div className="customer-section-title"><div><span className="customer-kicker">Почему это удобно</span><h2>Агент делает сложное за вас</h2></div><a href="/live-search">Проверить реальный поиск →</a></div>
+        <div className="customer-section-title"><div><span className="customer-kicker">Почему это удобно</span><h2>Агент делает сложное за вас</h2></div><a href="/live-search">Посмотреть демонстрацию →</a></div>
         <div className="benefit-grid"><article><span>01</span><h3>Узнаёт точную модель</h3><p>По названию, фотографии или штрих-коду. Перед поиском вы подтверждаете результат.</p></article><article><span>02</span><h3>Считает настоящую выгоду</h3><p>Сравнивает итог к оплате, сроки, гарантию и надёжность, а не только цену в карточке.</p></article><article><span>03</span><h3>Подключает малые магазины</h3><p>Проверенные продавцы могут предложить цену лучше маркетплейсов через безопасную сделку.</p></article></div>
         <section className="trust-strip"><div><span>◇</span><h3>Понятно, почему предложение лучшее</h3><p>Для каждой рекомендации показываем свежесть цены, совпадение модели, условия возврата и причину оценки.</p></div><a href="/live-search">Найти товар</a></section>
       </section>
     </>}
 
-    {tab === "favorites" && <section className="customer-dashboard"><div className="customer-section-title"><div><span className="customer-kicker">Контроль цен</span><h1>Ваши реальные наблюдения</h1><p>История цен и уведомления привязаны к аккаунту — чужие и демонстрационные данные здесь не показываются.</p></div><button onClick={() => setTab("search")}>+ Найти товар</button></div><article className="customer-account-gateway"><span>⌁</span><div><h2>Откройте личный кабинет</h2><p>Там находятся только ваши правила цены, текущие значения и история уведомлений.</p></div><a href="/account">Мои цены →</a></article></section>}
+    {tab === "favorites" && <section className="customer-dashboard"><div className="customer-section-title"><div><span className="customer-kicker">Контроль цен</span><h1>Ваши реальные наблюдения</h1><p>История цен и уведомления привязаны к аккаунту — чужие и демонстрационные данные здесь не показываются.</p></div><button onClick={() => setTab("search")}>+ Найти товар</button></div><article className="customer-account-gateway"><span>⌁</span><div><h2>{session?.authenticated ? "Откройте личный кабинет" : "Войдите, чтобы следить за ценами"}</h2><p>Там находятся только ваши правила цены, текущие значения и история уведомлений.</p></div><a href={accountSectionHref("prices")}>{session?.authenticated ? "Мои цены" : "Войти"} →</a></article></section>}
 
-    {tab === "orders" && <section className="customer-dashboard"><div className="customer-section-title"><div><span className="customer-kicker">Мои покупки</span><h1>Только ваши заказы</h1><p>Предложение, оплата, доставка и защита показываются из рабочей базы после входа.</p></div></div><article className="customer-account-gateway"><span>▣</span><div><h2>Перейти к покупкам</h2><p>Демонстрационные заказы явно отмечаются и никогда не требуют оплаты.</p></div><a href="/account">Мои покупки →</a></article></section>}
+    {tab === "orders" && <section className="customer-dashboard"><div className="customer-section-title"><div><span className="customer-kicker">Мои покупки</span><h1>Только ваши заказы</h1><p>Предложение, оплата, доставка и защита показываются из рабочей базы после входа.</p></div></div><article className="customer-account-gateway"><span>▣</span><div><h2>{session?.authenticated ? "Перейти к покупкам" : "Войдите, чтобы увидеть покупки"}</h2><p>Демонстрационные заказы явно отмечаются и никогда не требуют оплаты.</p></div><a href={accountSectionHref("orders")}>{session?.authenticated ? "Мои покупки" : "Войти"} →</a></article></section>}
 
     {tab === "help" && <section className="customer-dashboard"><div className="customer-section-title"><div><span className="customer-kicker">Помощь</span><h1>Помощь по конкретному заказу</h1><p>История обращения сохраняется вместе с заказом и доступна только его владельцу и сотруднику поддержки.</p></div></div><div className="help-grid"><a href="/account"><span>▤</span><b>Проверить заказ</b><small>Оплата и доставка</small></a><a href="/legal/safe-deal-rules#section-7"><span>↻</span><b>Правила возврата</b><small>Условия до покупки</small></a><a href="/account"><span>!</span><b>Открыть спор</b><small>Из личного кабинета</small></a><a href="/legal"><span>◇</span><b>Документы сервиса</b><small>Права и ответственность</small></a></div></section>}
 
-    {tab === "profile" && <section className="customer-dashboard"><div className="profile-banner"><span className="customer-avatar large">○</span><div><h1>Ваш профиль</h1><p>Имя, тариф и данные появятся после защищённого входа</p></div></div><article className="customer-account-gateway"><span>○</span><div><h2>Личный кабинет</h2><p>Управляйте покупками, запросами магазинам, уведомлениями, подпиской и выходом из аккаунта.</p></div><a href="/account">Войти в кабинет →</a></article></section>}
+    {tab === "profile" && <section className="customer-dashboard"><div className="profile-banner"><span className="customer-avatar large">{session?.authenticated ? accountInitial : "○"}</span><div><h1>{session?.authenticated ? accountName : "Ваш профиль"}</h1><p>{session?.authenticated ? session.user?.email : "Имя, тариф и данные появятся после защищённого входа"}</p></div></div><article className="customer-account-gateway"><span>○</span><div><h2>Личный кабинет</h2><p>Управляйте покупками, запросами магазинам, уведомлениями, подпиской и выходом из аккаунта.</p></div><a href={accountSectionHref("profile")}>{session?.authenticated ? "Открыть кабинет" : "Войти в кабинет"} →</a></article></section>}
 
-    <footer className="customer-footer"><span>Агент покупок · честный выбор без скрытой наценки</span><div><a href="/account">Личный кабинет</a><a href="/seller">Продавцам</a><a href="/legal">Документы</a><a href="/legal/privacy-policy">Конфиденциальность</a></div></footer>
+    <footer className="customer-footer"><span>Агент покупок · честный выбор без скрытой наценки</span><div><a href={accountHref}>{session?.authenticated ? "Личный кабинет" : "Войти"}</a><a href="/seller">Продавцам</a><a href="/legal">Документы</a><a href="/legal/privacy-policy">Конфиденциальность</a></div></footer>
   </main>;
 }

@@ -2,6 +2,8 @@
 /* eslint-disable @next/next/no-html-link-for-pages */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAccessibleDialog } from "../ui/use-accessible-dialog";
+import { useHashSection } from "../ui/use-hash-section";
 
 type AdminSection = "overview" | "users" | "sellers" | "orders" | "disputes" | "risk" | "system" | "audit";
 type Metrics = { users: number; sellers: number; orders: number; openDemand: number; openDisputes: number; elevatedRisks: number; failedNotifications: number };
@@ -23,6 +25,8 @@ const nav: Array<{ id: AdminSection; label: string; icon: string }> = [
   { id: "system", label: "Система", icon: "◫" },
   { id: "audit", label: "Аудит", icon: "≡" },
 ];
+const adminSectionIds = nav.map((item) => item.id);
+type PendingResolution = { item: Dispute; status: "resolved" | "rejected" | "closed" };
 
 const labels: Record<string, string> = {
   active: "Активен", suspended: "Приостановлен", draft: "Черновик", review: "На проверке", rejected: "Отклонён",
@@ -38,7 +42,7 @@ function money(value: number) { return `${value.toLocaleString("ru-RU")} ₽`; }
 const orderTransitions: Record<string, string[]> = { created: ["cancelled"], awaiting_payment: ["cancelled"], paid: ["processing", "disputed", "refunded"], processing: ["delivered", "disputed", "refunded", "cancelled"], delivered: ["disputed", "refunded"], disputed: ["processing", "delivered", "refunded", "cancelled"], refunded: [], cancelled: [] };
 
 export default function AdminDashboard({ initialName, initialEmail, logoutHref }: { initialName: string; initialEmail: string; logoutHref: string }) {
-  const [section, setSection] = useState<AdminSection>("overview");
+  const [section, setSection] = useHashSection<AdminSection>("overview", adminSectionIds);
   const [metrics, setMetrics] = useState<Metrics>({ users: 0, sellers: 0, orders: 0, openDemand: 0, openDisputes: 0, elevatedRisks: 0, failedNotifications: 0 });
   const [modules, setModules] = useState<Module[]>([]);
   const [sellers, setSellers] = useState<Seller[]>([]);
@@ -49,6 +53,11 @@ export default function AdminDashboard({ initialName, initialEmail, logoutHref }
   const [audits, setAudits] = useState<Audit[]>([]);
   const [notice, setNotice] = useState("Загружаем панель управления…");
   const [busy, setBusy] = useState(false);
+  const [pendingResolution, setPendingResolution] = useState<PendingResolution | null>(null);
+  const [resolutionText, setResolutionText] = useState("");
+  const [resolutionError, setResolutionError] = useState("");
+  const closeResolutionDialog = useCallback(() => { if (!busy) { setPendingResolution(null); setResolutionText(""); setResolutionError(""); } }, [busy]);
+  const resolutionDialogRef = useAccessibleDialog(Boolean(pendingResolution), closeResolutionDialog);
 
   const load = useCallback(async () => {
     const [overviewResponse, sellersResponse, operationsResponse] = await Promise.all([
@@ -72,11 +81,18 @@ export default function AdminDashboard({ initialName, initialEmail, logoutHref }
 
   const runOperation = async (payload: Record<string, unknown>, success: string) => {
     setBusy(true); setNotice("Сохраняем изменение…");
-    const response = await fetch("/api/admin/operations", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
-    const result = await response.json() as { error?: string };
-    setNotice(response.ok ? success : result.error ?? "Не удалось сохранить изменение");
-    if (response.ok) await load();
-    setBusy(false);
+    try {
+      const response = await fetch("/api/admin/operations", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const result = await response.json() as { error?: string };
+      setNotice(response.ok ? success : result.error ?? "Не удалось сохранить изменение");
+      if (response.ok) await load();
+      return response.ok;
+    } catch {
+      setNotice("Нет связи с сервером. Проверьте интернет и повторите действие.");
+      return false;
+    } finally {
+      setBusy(false);
+    }
   };
 
   const reviewSeller = async (seller: Seller, status: string, kycStatus: string) => {
@@ -88,10 +104,18 @@ export default function AdminDashboard({ initialName, initialEmail, logoutHref }
     setBusy(false);
   };
 
-  const resolveDispute = async (item: Dispute, status: "resolved" | "rejected" | "closed") => {
-    const resolution = window.prompt("Кратко опишите решение для журнала и покупателя:", item.resolution ?? "");
-    if (!resolution) return;
-    await runOperation({ action: "dispute_resolution", targetId: item.id, status, resolution }, "Решение по спору сохранено");
+  const openResolutionDialog = (item: Dispute, status: PendingResolution["status"]) => {
+    setPendingResolution({ item, status });
+    setResolutionText(item.resolution ?? "");
+    setResolutionError("");
+  };
+
+  const saveResolution = async () => {
+    if (!pendingResolution) return;
+    const resolution = resolutionText.trim();
+    if (resolution.length < 10) { setResolutionError("Опишите решение минимум в 10 символах, чтобы оно было понятно покупателю."); return; }
+    const saved = await runOperation({ action: "dispute_resolution", targetId: pendingResolution.item.id, status: pendingResolution.status, resolution }, "Решение по спору сохранено");
+    if (saved) { setPendingResolution(null); setResolutionText(""); setResolutionError(""); }
   };
 
   const activeModules = useMemo(() => modules.filter((item) => item.status === "ready").length, [modules]);
@@ -124,7 +148,7 @@ export default function AdminDashboard({ initialName, initialEmail, logoutHref }
 
         {section === "orders" && <AdminList title="Заказы" eyebrow="Сделки и исполнение" description="Итоговая цена, оплата, доставка и только допустимые следующие этапы заказа."><div className="admin-order-list">{orders.length === 0 ? <Empty text="Заказов пока нет" /> : orders.map((order) => <article key={order.id}><div><Status value={order.status} /><small>{date(order.created_at)}</small></div><section><span>▣</span><div><h2>{order.product_name}</h2><p>{order.public_id} · {order.buyer_email}</p></div><b>{money(order.amount)}</b></section><footer><span>Оплата: <b>{human(order.payment_status)}</b></span><span>Доставка: <b>{human(order.delivery_status)}</b></span><label>Следующий этап<select value={order.status} disabled={busy || !(orderTransitions[order.status]?.length)} onChange={(event) => void runOperation({ action: "order_status", targetId: order.id, status: event.target.value }, "Статус заказа обновлён")}><option value={order.status}>{human(order.status)}</option>{(orderTransitions[order.status] ?? []).map((status) => <option key={status} value={status}>{human(status)}</option>)}</select></label></footer></article>)}</div></AdminList>}
 
-        {section === "disputes" && <AdminList title="Споры" eyebrow="Защита покупателя" description="Рассматривайте причины, фиксируйте решение и сохраняйте прозрачный журнал."><div className="admin-case-list">{disputes.length === 0 ? <Empty text="Открытых и завершённых споров нет" /> : disputes.map((item) => <article key={item.id}><header><div><span>Спор #{item.id}</span><h2>Заказ #{item.order_id}</h2></div><Status value={item.status} /></header><p>{item.reason}</p><small>{item.opened_by_email} · {date(item.created_at)}</small>{item.resolution && <blockquote>{item.resolution}</blockquote>}{item.status === "open" && <footer><button disabled={busy} onClick={() => void resolveDispute(item, "resolved")}>Решить</button><button disabled={busy} onClick={() => void resolveDispute(item, "rejected")}>Отклонить</button><button className="neutral" disabled={busy} onClick={() => void resolveDispute(item, "closed")}>Закрыть</button></footer>}</article>)}</div></AdminList>}
+        {section === "disputes" && <AdminList title="Споры" eyebrow="Защита покупателя" description="Рассматривайте причины, фиксируйте решение и сохраняйте прозрачный журнал."><div className="admin-case-list">{disputes.length === 0 ? <Empty text="Открытых и завершённых споров нет" /> : disputes.map((item) => <article key={item.id}><header><div><span>Спор #{item.id}</span><h2>Заказ #{item.order_id}</h2></div><Status value={item.status} /></header><p>{item.reason}</p><small>{item.opened_by_email} · {date(item.created_at)}</small>{item.resolution && <blockquote>{item.resolution}</blockquote>}{item.status === "open" && <footer><button disabled={busy} onClick={() => openResolutionDialog(item, "resolved")}>Решить</button><button disabled={busy} onClick={() => openResolutionDialog(item, "rejected")}>Отклонить</button><button className="neutral" disabled={busy} onClick={() => openResolutionDialog(item, "closed")}>Закрыть</button></footer>}</article>)}</div></AdminList>}
 
         {section === "risk" && <AdminList title="Риски" eyebrow="Антифрод" description="События показываются без сетевых отпечатков и чувствительных технических деталей."><div className="admin-risk-list">{risks.length === 0 ? <Empty text="Событий риска нет" /> : risks.map((item) => <article key={item.id}><div className={`admin-risk-score ${item.score >= 70 ? "critical" : item.score >= 40 ? "warning" : "calm"}`}><b>{item.score}</b><small>из 100</small></div><div><h2>{human(item.event_type)}</h2><p>{item.actor_email || "Системное событие"} · {date(item.created_at)}</p><Status value={item.status} /></div>{item.status === "open" && <footer><button disabled={busy} onClick={() => void runOperation({ action: "risk_resolution", targetId: item.id, status: "closed" }, "Событие риска закрыто")}>Закрыть после проверки</button><button className="neutral" disabled={busy} onClick={() => void runOperation({ action: "risk_resolution", targetId: item.id, status: "ignored" }, "Событие отмечено как безопасное")}>Ложное срабатывание</button></footer>}</article>)}</div></AdminList>}
 
@@ -133,6 +157,7 @@ export default function AdminDashboard({ initialName, initialEmail, logoutHref }
         {section === "audit" && <AdminList title="Журнал аудита" eyebrow="Контроль действий" description="Последние административные и значимые пользовательские операции. Сетевые отпечатки в интерфейс не передаются."><div className="admin-audit-list">{audits.length === 0 ? <Empty text="Записей аудита пока нет" /> : audits.map((item) => <article key={item.id}><span>≡</span><div><b>{human(item.action)}</b><p>{item.actor_email || "Система"}</p></div><small>{human(item.entity_type)}{item.entity_id ? ` #${item.entity_id}` : ""}</small><time>{date(item.created_at)}</time></article>)}</div></AdminList>}
       </div>
     </section>
+    {pendingResolution && <div className="transaction-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) closeResolutionDialog(); }}><section ref={resolutionDialogRef} className="transaction-modal admin-resolution-dialog" role="dialog" aria-modal="true" aria-labelledby="resolution-dialog-title" aria-describedby="resolution-dialog-description" tabIndex={-1}><header><div><span className="customer-kicker">Спор #{pendingResolution.item.id}</span><h2 id="resolution-dialog-title">Зафиксировать решение</h2></div><button type="button" disabled={busy} onClick={closeResolutionDialog} aria-label="Закрыть окно">×</button></header><p id="resolution-dialog-description">Решение увидит покупатель, и оно сохранится в журнале аудита. Статус после сохранения: <b>{human(pendingResolution.status)}</b>.</p><blockquote>{pendingResolution.item.reason}</blockquote><label className="admin-resolution-field">Комментарий к решению<textarea rows={6} value={resolutionText} onChange={(event) => { setResolutionText(event.target.value); setResolutionError(""); }} maxLength={1000} placeholder="Опишите проверенные факты, итог и следующий шаг для покупателя" aria-invalid={Boolean(resolutionError)} aria-describedby={resolutionError ? "resolution-error" : "resolution-hint"} /></label><div className="admin-resolution-meta"><small id="resolution-hint">От 10 до 1000 символов</small><small>{resolutionText.length}/1000</small></div>{resolutionError && <p className="admin-resolution-error" id="resolution-error" role="alert">{resolutionError}</p>}<div className="admin-resolution-actions"><button type="button" className="secondary" disabled={busy} onClick={closeResolutionDialog}>Отмена</button><button type="button" disabled={busy} onClick={() => void saveResolution()}>{busy ? "Сохраняем…" : "Сохранить решение"}</button></div></section></div>}
   </main>;
 }
 

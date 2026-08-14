@@ -63,11 +63,23 @@ test("GET /api/health reports only configured capabilities", async () => {
   assert.equal("platform" in payload, false);
 });
 
-test("home header exposes a direct personal account entry", async () => {
+test("home header shows an honest sign-in entry for an anonymous visitor", async () => {
   const response = await request("/", { headers: { accept: "text/html" } });
   const html = await response.text();
-  assert.match(html, /href=["']\/account["']/i);
+  assert.match(html, /href=["']\/login\?return_to=%2Faccount["']/i);
+  assert.match(html, />Войти</i);
   assert.match(html, /Личный кабинет/i);
+  assert.doesNotMatch(html, /customer-avatar[^>]*>С</i);
+});
+
+test("GET /api/auth/session reports the forwarded signed-in user without exposing secrets", async () => {
+  const response = await request("/api/auth/session", { headers: { "oai-authenticated-user-email": "buyer@example.test", "oai-authenticated-user-full-name": "%D0%90%D0%BD%D0%BD%D0%B0", "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8" } });
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.authenticated, true);
+  assert.equal(payload.user.email, "buyer@example.test");
+  assert.equal(payload.user.displayName, "Анна");
+  assert.deepEqual(Object.keys(payload.user).sort(), ["displayName", "email", "role"]);
 });
 
 test("standalone account entry redirects to the built-in login instead of a ChatGPT-only route", async () => {
