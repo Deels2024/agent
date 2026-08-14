@@ -104,6 +104,7 @@ export const authCredentials = sqliteTable("auth_credentials", {
   passwordHash: text("password_hash").notNull(),
   passwordIterations: integer("password_iterations").notNull(),
   status: text("status").notNull().default("active"),
+  emailVerifiedAt: text("email_verified_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [index("auth_credentials_status_idx").on(table.status)]);
@@ -117,6 +118,18 @@ export const authSessions = sqliteTable("auth_sessions", {
 }, (table) => [
   index("auth_sessions_user_idx").on(table.userEmail, table.createdAt),
   index("auth_sessions_expires_idx").on(table.expiresAt),
+]);
+
+export const authTokens = sqliteTable("auth_tokens", {
+  tokenHash: text("token_hash").primaryKey(),
+  userEmail: text("user_email").notNull(),
+  purpose: text("purpose").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  usedAt: text("used_at"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("auth_tokens_user_purpose_idx").on(table.userEmail, table.purpose, table.createdAt),
+  index("auth_tokens_expires_idx").on(table.expiresAt),
 ]);
 
 export const legalAcceptances = sqliteTable("legal_acceptances", {
@@ -326,6 +339,7 @@ export const notifications = sqliteTable("notifications", {
   status: text("status").notNull().default("queued"),
   scheduledAt: text("scheduled_at"),
   sentAt: text("sent_at"),
+  readAt: text("read_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [index("notifications_recipient_status_idx").on(table.recipientEmail, table.status)]);
 

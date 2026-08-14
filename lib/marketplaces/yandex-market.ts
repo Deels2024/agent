@@ -37,6 +37,7 @@ async function search(input: SearchInput): Promise<NormalizedOffer[]> {
     const price = numberFrom(basicPrice.value ?? offer.price);
     const oldPrice = numberFrom(basicPrice.discountBase ?? offer.oldPrice);
     const barcodes = Array.isArray(offer.barcodes) ? offer.barcodes.map(String) : [];
+    const pictures = Array.isArray(offer.pictures) ? offer.pictures.map(String) : [];
     return {
       id: `yandex_market:${offerId}`,
       provider: "yandex_market",
@@ -51,6 +52,11 @@ async function search(input: SearchInput): Promise<NormalizedOffer[]> {
       score: 0,
       url: `https://market.yandex.ru/search?text=${encodeURIComponent(String(offer.name || input.query))}`,
       barcode: barcodes[0],
+      brand: String(offer.vendor || "") || undefined,
+      model: String(offer.name || "") || undefined,
+      mpn: String(offer.vendorCode || offer.offerId || "") || undefined,
+      imageUrl: pictures[0],
+      updatedAt: new Date().toISOString(),
       verified: true,
     };
   });

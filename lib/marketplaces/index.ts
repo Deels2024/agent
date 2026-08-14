@@ -42,6 +42,9 @@ function demoOffers(input: SearchInput): NormalizedOffer[] {
     inStock: true,
     score: 0,
     matchConfidence: 100,
+    matchLevel: "exact" as const,
+    matchReasons: ["Учебный товар точно повторяет поисковый запрос"],
+    updatedAt: new Date().toISOString(),
     verified: false,
   }));
 }

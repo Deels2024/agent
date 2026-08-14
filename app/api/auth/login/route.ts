@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     if (!rate.allowed) return Response.json({ error: "Слишком много попыток. Повторите позже.", retryAfter: rate.retryAfter }, { status: 429 });
     const body = await request.json() as { email?: unknown; password?: unknown };
     const result = await loginStandaloneUser(request, body);
-    if (!result.ok) return Response.json({ error: result.error }, { status: result.status });
+    if (!result.ok) return Response.json({ error: result.error, code: "code" in result ? result.code : undefined }, { status: result.status });
     return Response.json({ user: result.user }, { status: result.status, headers: { "set-cookie": result.cookie, "cache-control": "no-store" } });
   } catch {
     return Response.json({ error: "Вход временно недоступен. Повторите немного позже." }, { status: 503 });

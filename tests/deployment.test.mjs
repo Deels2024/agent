@@ -24,8 +24,10 @@ test("Docker runtime provides a persistent D1 binding", () => {
   assert.match(runtimeConfigScript, /CREDENTIAL_ENCRYPTION_KEY/);
   assert.match(runtimeConfigScript, /PUBLIC_ACCESS_ENABLED/);
   assert.match(runtimeConfigScript, /AUTH_MODE/);
+  assert.match(runtimeConfigScript, /EMAIL_VERIFICATION_REQUIRED/);
   assert.match(compose, /worker_state:\/app\/\.wrangler/);
   assert.match(compose, /AUTH_MODE: \$\{AUTH_MODE:-standalone\}/);
+  assert.match(compose, /EMAIL_VERIFICATION_REQUIRED: \$\{EMAIL_VERIFICATION_REQUIRED:-false\}/);
 });
 
 test("Docker health check rejects a backend without database persistence", () => {
@@ -66,6 +68,7 @@ test("server compose passes every protected production integration setting", () 
     "PRIVACY_PROCESSORS_CONFIRMED",
     "PUBLIC_ACCESS_ENABLED",
     "AUTH_MODE",
+    "EMAIL_VERIFICATION_REQUIRED",
   ]) {
     assert.match(compose, new RegExp(`${setting}: \\\${${setting}`));
   }

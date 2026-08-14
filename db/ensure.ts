@@ -7,7 +7,8 @@ export function ensureMarketplaceSchema() {
   const runtime = runtimeEnv() as { DB?: D1Database };
   if (!runtime.DB) throw new Error("D1 binding DB is not configured");
 
-  initialized = runtime.DB.batch([
+  initialized = (async () => {
+    await runtime.DB.batch([
     runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS searches (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_email TEXT,
@@ -80,6 +81,7 @@ export function ensureMarketplaceSchema() {
       password_hash TEXT NOT NULL,
       password_iterations INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'active',
+      email_verified_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
@@ -93,6 +95,16 @@ export function ensureMarketplaceSchema() {
     )`),
     runtime.DB.prepare("CREATE INDEX IF NOT EXISTS auth_sessions_user_idx ON auth_sessions (user_email, created_at)"),
     runtime.DB.prepare("CREATE INDEX IF NOT EXISTS auth_sessions_expires_idx ON auth_sessions (expires_at)"),
+    runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS auth_tokens (
+      token_hash TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS auth_tokens_user_purpose_idx ON auth_tokens (user_email, purpose, created_at)"),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS auth_tokens_expires_idx ON auth_tokens (expires_at)"),
     runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS legal_acceptances (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_email TEXT NOT NULL,
@@ -304,6 +316,7 @@ export function ensureMarketplaceSchema() {
       status TEXT NOT NULL DEFAULT 'queued',
       scheduled_at TEXT,
       sent_at TEXT,
+      read_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     runtime.DB.prepare("CREATE INDEX IF NOT EXISTS notifications_recipient_status_idx ON notifications (recipient_email, status)"),
@@ -353,10 +366,23 @@ export function ensureMarketplaceSchema() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     runtime.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS webhook_events_provider_key_uidx ON webhook_events (provider, event_key)"),
-  ]).then(() => undefined).catch((error) => {
+    ]);
+    const verificationColumnAdded = await ensureColumn(runtime.DB, "auth_credentials", "email_verified_at", "TEXT");
+    if (verificationColumnAdded) await runtime.DB.prepare("UPDATE auth_credentials SET email_verified_at = COALESCE(email_verified_at, updated_at)").run();
+    await ensureColumn(runtime.DB, "notifications", "read_at", "TEXT");
+  })().catch((error) => {
     initialized = null;
     throw error;
   });
 
   return initialized;
+}
+
+async function ensureColumn(database: D1Database, table: string, column: string, definition: string) {
+  const info = await database.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+  if (!info.results.some((item) => item.name === column)) {
+    await database.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+    return true;
+  }
+  return false;
 }

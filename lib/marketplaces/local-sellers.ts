@@ -10,6 +10,7 @@ type LocalRow = {
   price: number;
   stock: number;
   seller_name: string;
+  updated_at: string;
 };
 
 function status(): MarketplaceStatus {
@@ -27,7 +28,7 @@ function status(): MarketplaceStatus {
 async function search(input: SearchInput): Promise<NormalizedOffer[]> {
   const db = (runtimeEnv() as { DB?: D1Database }).DB;
   if (!db) return [];
-  const rows = await db.prepare(`SELECT i.id AS item_id, i.seller_id, i.product_name, i.barcode, i.price, i.stock, s.name AS seller_name
+  const rows = await db.prepare(`SELECT i.id AS item_id, i.seller_id, i.product_name, i.barcode, i.price, i.stock, i.updated_at, s.name AS seller_name
     FROM inventory_items i
     INNER JOIN sellers s ON s.id = i.seller_id
     WHERE i.status = 'active' AND i.stock > 0 AND s.status = 'active' AND s.kyc_status = 'verified'
@@ -51,6 +52,7 @@ async function search(input: SearchInput): Promise<NormalizedOffer[]> {
         inStock: row.stock > 0,
         score: 0,
         barcode: row.barcode ?? undefined,
+        updatedAt: row.updated_at,
         verified: true,
       };
       return { ...base, matchConfidence: matchConfidence(input, base) };

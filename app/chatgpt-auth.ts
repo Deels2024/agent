@@ -25,7 +25,7 @@ export async function getAuthenticatedUser(): Promise<AppUser | null> {
   const fullName = encodedFullName && requestHeaders.get(USER_FULL_NAME_ENCODING_HEADER) === PERCENT_ENCODED_UTF8
     ? safeDecodeURIComponent(encodedFullName)
     : null;
-  return { displayName: fullName ?? email, email: email.toLowerCase(), fullName, provider: "chatgpt" };
+  return { displayName: fullName ?? email, email: email.toLowerCase(), fullName, provider: "chatgpt", emailVerified: true };
 }
 
 export async function requireAuthenticatedUser(returnTo: string): Promise<AppUser> {
