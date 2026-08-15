@@ -98,6 +98,16 @@ test("default login route renders the email and password form", async () => {
   assert.doesNotMatch(html, /signin-with-chatgpt/i);
 });
 
+test("registration lets a new user start as a buyer or seller without separate accounts", async () => {
+  const response = await request("/login?mode=register&return_to=/seller", { headers: { accept: "text/html" } });
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Как хотите начать/i);
+  assert.match(html, /Покупать выгоднее/i);
+  assert.match(html, /Продавать товары/i);
+  assert.match(html, /без второго аккаунта/i);
+});
+
 test("standalone mode never trusts a spoofed ChatGPT identity header", async () => {
   const response = await request("/api/admin/overview", {
     headers: { "oai-authenticated-user-email": "admin@example.test" },
@@ -118,9 +128,13 @@ test("GET /api/platform/status reports all commercial modules honestly", async (
 
 for (const [method, path] of [
   ["POST", "/api/account/bootstrap"],
+  ["GET", "/api/account/destination"],
+  ["POST", "/api/account/preference"],
   ["POST", "/api/orders"],
   ["POST", "/api/price-alerts"],
   ["POST", "/api/sellers/profile"],
+  ["POST", "/api/sellers/inventory"],
+  ["PATCH", "/api/sellers/inventory"],
   ["POST", "/api/legal/register"],
   ["GET", "/api/admin/overview"],
   ["GET", "/api/admin/operations"],
@@ -193,6 +207,19 @@ test("demo catalog does not show an implausibly cheap premium phone", async () =
   assert.equal(payload.demo, true);
   assert.equal(payload.offers[0].productName, "Apple iPhone 15 Pro 256 GB");
   assert.ok(payload.offers[0].price >= 90_000);
+});
+
+test("search treats compact and spaced capacity notation as the same model", async () => {
+  const response = await request("/api/search", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query: "Apple iPhone 15 Pro 256GB", mode: "text", limit: 10 }),
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.demo, true);
+  assert.equal(payload.offers.length, 3);
+  assert.equal(payload.offers[0].productName, "Apple iPhone 15 Pro 256 GB");
 });
 
 test("GET /api/history requires identity before reading saved searches", async () => {

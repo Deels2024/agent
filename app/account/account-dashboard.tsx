@@ -78,6 +78,7 @@ export default function AccountDashboard({ initialName, initialEmail, initialIsA
       }
       const bootstrapData = await bootstrap.json() as { legal?: LegalStatus };
       if (bootstrapData.legal) setLegalStatus(bootstrapData.legal);
+      await fetch("/api/account/preference", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ portal: "buyer" }) }).catch(() => null);
       const [ordersResponse, alertsResponse, noticesResponse, subscriptionResponse, demandResponse, healthResponse] = await Promise.all([fetch("/api/orders"), fetch("/api/price-alerts"), fetch("/api/notifications"), fetch("/api/subscriptions"), fetch("/api/demand-requests"), fetch("/api/health")]);
       if (ordersResponse.ok) setOrders(((await ordersResponse.json()) as { orders: Order[] }).orders);
       if (alertsResponse.ok) setAlerts(((await alertsResponse.json()) as { alerts: Alert[] }).alerts);
@@ -176,7 +177,7 @@ export default function AccountDashboard({ initialName, initialEmail, initialIsA
       <a className="account-logo" href="/"><span>✦</span><div><b>Агент покупок</b><small>Личный кабинет</small></div></a>
       <div className="account-user-mini"><span>{userInitial}</span><div><b>{initialName}</b><small>{initialEmail}</small></div></div>
       <nav aria-label="Разделы личного кабинета">{navigation.map((item) => <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => setSection(item.id)}><span>{item.icon}</span>{item.label}{item.id === "notifications" && unreadNotices > 0 && <em>{Math.min(unreadNotices, 9)}</em>}</button>)}</nav>
-      <div className="account-sidebar-links">{initialIsAdmin && <a href="/admin"><span>⚙</span>Админ-панель</a>}<a href="/seller"><span>◇</span>Кабинет продавца</a><a href="/live-search"><span>⌕</span>Вернуться к поиску</a></div>
+      <div className="account-sidebar-links">{initialIsAdmin && <a href="/admin"><span>⚙</span>Админ-панель</a>}<a href="/seller"><span>◇</span>Переключиться на продавца</a><a href="/live-search"><span>⌕</span>Вернуться к поиску</a></div>
       <a className="account-logout" href={logoutHref}><span>↪</span><div><b>Выйти</b><small>Завершить сеанс</small></div></a>
     </aside>
 

@@ -37,6 +37,7 @@ export function matchesOffer(input: SearchInput, values: unknown[]) {
 export function tokenize(value: string) {
   return value.toLocaleLowerCase("ru")
     .replace(/[ё]/g, "е")
+    .replace(/(\d+(?:[.,]\d+)?)\s*(гб|gb|тб|tb)\b/giu, (_match, amount: string, unit: string) => amount.replace(",", ".") + unit.replace("гб", "gb").replace("тб", "tb"))
     .replace(/[^a-zа-я0-9]+/gi, " ")
     .split(/\s+/)
     .map((token) => token.trim())

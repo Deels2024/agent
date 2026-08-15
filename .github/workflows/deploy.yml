@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -29,4 +29,28 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' '5.183.191.139 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBL2znjGx+xsElDocnV/OCsk5UTosfxnzC79N0h8Apod7F8y/Gpxe6d8uE2/IsXSSVbqh98RlWbYImrF/LV/N2vI=' > ~/.ssh/known_hosts
       - name: Deploy buyer agent
-        run: ssh -o IdentitiesOnly=yes root@5.183.191.139
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          deploy_path="${DEPLOY_PATH:-/root/agent}"
+          case "$deploy_path" in
+            /*) ;;
+            *) echo "DEPLOY_PATH must be an absolute path" >&2; exit 64 ;;
+          esac
+          case "$deploy_path" in
+            /|/root|/home) echo "DEPLOY_PATH is too broad" >&2; exit 64 ;;
+          esac
+
+          printf -v quoted_path '%q' "$deploy_path"
+          ssh -o IdentitiesOnly=yes root@5.183.191.139 "bash -s -- $quoted_path" <<'REMOTE'
+            set -Eeuo pipefail
+            app_dir="$1"
+
+            test -d "$app_dir/.git"
+            cd "$app_dir"
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+            docker compose -f docker-compose.server.yml up -d --build --wait
+            curl --fail --silent --show-error http://127.0.0.1:8788/api/health
+          REMOTE

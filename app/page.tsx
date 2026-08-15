@@ -224,7 +224,8 @@ export default function Home() {
     return () => { active = false; };
   }, []);
 
-  const accountHref = session?.authenticated ? "/account" : "/login?return_to=%2Faccount";
+  const preferredPortal = session?.user?.role === "seller" ? "/seller" : "/account";
+  const accountHref = session?.authenticated ? preferredPortal : "/login?return_to=%2Faccount";
   const accountSectionHref = (section: string) => session?.authenticated ? `/account#${section}` : `/login?return_to=${encodeURIComponent(`/account#${section}`)}`;
   const accountName = session?.user?.displayName?.trim() || "Войти";
   const accountInitial = session?.user?.displayName?.trim().slice(0, 1).toUpperCase() || "↪";
@@ -235,7 +236,7 @@ export default function Home() {
       <nav aria-label="Основная навигация">{customerTabs.map((item) => <a href={`#${item.id}`} key={item.id} className={tab === item.id ? "active" : ""} aria-current={tab === item.id ? "page" : undefined} onClick={(event) => { event.preventDefault(); setTab(item.id); }}><span aria-hidden="true">{item.icon}</span>{item.label}</a>)}</nav>
       <a className="customer-account-link" href={accountHref} aria-label={session?.authenticated ? `Открыть кабинет пользователя ${accountName}` : "Войти в личный кабинет"}>
         <span className="customer-avatar" aria-hidden="true">{accountInitial}</span>
-        <span><b>{accountName}</b><small>{session?.authenticated ? "Покупки и профиль" : "Личный кабинет"}</small></span>
+        <span><b>{accountName}</b><small>{session?.authenticated ? preferredPortal === "/seller" ? "Кабинет продавца" : "Покупки и профиль" : "Личный кабинет"}</small></span>
       </a>
     </header>
 
