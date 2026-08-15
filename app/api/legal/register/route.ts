@@ -17,21 +17,22 @@ export async function POST(request: Request) {
     const db = getDb();
     const [existing] = await db.select().from(users).where(eq(users.email, identity.email)).limit(1);
     if (existing?.status === "suspended") return Response.json({ error: "Учётная запись приостановлена", code: "account_suspended" }, { status: 403 });
-    const body = await request.json() as { acceptances?: SubmittedAcceptance[]; marketingAccepted?: boolean };
+    const body = await request.json() as { acceptances?: SubmittedAcceptance[]; marketingAccepted?: boolean; roleIntent?: unknown };
+    const roleIntent = body.roleIntent === "seller" ? "seller" : "buyer";
     const submitted = Array.isArray(body.acceptances) ? body.acceptances.filter((item): item is SubmittedAcceptance => Boolean(item && typeof item.slug === "string" && typeof item.version === "string")) : [];
     const recorded = await recordLegalAcceptances(request, { userEmail: identity.email, scope: "buyer", submitted, source: "registration" });
     if (!recorded.ok) return Response.json({ error: "Нужно отдельно принять все обязательные документы в актуальной версии", code: "required_legal_acceptances_missing", documents: registrationDocumentSummary(), missing: recorded.validation.missing.map((item) => item.slug) }, { status: 400 });
 
     if (existing) {
-      await db.update(users).set({ displayName: identity.displayName, updatedAt: new Date().toISOString() }).where(eq(users.email, identity.email));
+      await db.update(users).set({ displayName: identity.displayName, role: roleIntent, updatedAt: new Date().toISOString() }).where(eq(users.email, identity.email));
     } else {
-      await db.insert(users).values({ email: identity.email, displayName: identity.displayName, role: identity.role });
+      await db.insert(users).values({ email: identity.email, displayName: identity.displayName, role: roleIntent });
     }
     const [subscription] = await db.select().from(subscriptions).where(eq(subscriptions.userEmail, identity.email)).orderBy(desc(subscriptions.createdAt)).limit(1);
     if (!subscription) await db.insert(subscriptions).values({ userEmail: identity.email, plan: "free", status: "active" });
     if (!existing) await db.insert(notifications).values({ recipientEmail: identity.email, template: "welcome", payloadJson: JSON.stringify({ name: identity.displayName }) });
     await recordOptionalMarketingChoice(request, { userEmail: identity.email, accepted: body.marketingAccepted === true });
-    await writeAudit(request, { actorEmail: identity.email, action: existing ? "legal.registration_renewed" : "account.registered", entityType: "user", entityId: identity.email, metadata: { legalScope: "buyer", marketingAccepted: body.marketingAccepted === true } });
+    await writeAudit(request, { actorEmail: identity.email, action: existing ? "legal.registration_renewed" : "account.registered", entityType: "user", entityId: identity.email, metadata: { legalScope: "buyer", marketingAccepted: body.marketingAccepted === true, roleIntent } });
     const [profile] = await db.select({ email: users.email, displayName: users.displayName, role: users.role, status: users.status, createdAt: users.createdAt }).from(users).where(eq(users.email, identity.email)).limit(1);
     return Response.json({ profile, legal: await getLegalStatus(identity.email, "buyer"), marketingAccepted: body.marketingAccepted === true }, { status: existing ? 200 : 201 });
   } catch {

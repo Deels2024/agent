@@ -37,6 +37,7 @@ export function matchesOffer(input: SearchInput, values: unknown[]) {
 export function tokenize(value: string) {
   return value.toLocaleLowerCase("ru")
     .replace(/[ё]/g, "е")
+    .replace(/(\d+(?:[.,]\d+)?)\s*(гб|gb|тб|tb)\b/giu, (_match, amount: string, unit: string) => amount.replace(",", ".") + unit.replace("гб", "gb").replace("тб", "tb"))
     .replace(/[^a-zа-я0-9]+/gi, " ")
     .split(/\s+/)
     .map((token) => token.trim())
@@ -112,7 +113,7 @@ export function rankOffers(offers: NormalizedOffer[], limit: number, input?: Sea
         ...offer,
         deliveryPrice: offer.deliveryPrice ?? 0,
         matchConfidence: confidence,
-        score: Math.max(1, Math.min(100, Math.round(
+        score: offer.provider === "demo" ? 0 : Math.max(1, Math.min(100, Math.round(
           30 + (lowest / total(offer)) * 28 + (confidence / 100) * 24 + (offer.verified ? 8 : 0) + (offer.deliveryDays === 0 ? 3 : 0) + freshnessScore + serviceScore
         ))),
       };

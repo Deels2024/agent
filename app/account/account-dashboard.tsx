@@ -3,6 +3,8 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { TRANSACTION_CONFIRMATION_VERSION } from "../../lib/legal-documents";
+import { useAccessibleDialog } from "../ui/use-accessible-dialog";
+import { useHashSection } from "../ui/use-hash-section";
 
 type AccountSection = "overview" | "requests" | "orders" | "prices" | "notifications" | "plus" | "profile";
 type Order = { id: number; publicId: string; productName: string; sellerName?: string | null; provider: string; amount: number; isDemo: boolean; status: string; paymentStatus: string; deliveryStatus: string; createdAt: string };
@@ -22,6 +24,7 @@ const navigation: Array<{ id: AccountSection; label: string; icon: string }> = [
   { id: "plus", label: "Подписка Plus", icon: "✦" },
   { id: "profile", label: "Профиль и защита", icon: "○" },
 ];
+const accountSectionIds = navigation.map((item) => item.id);
 
 const statusLabels: Record<string, string> = {
   created: "Создан", awaiting_payment: "Ожидает оплаты", paid: "Оплачен", processing: "Собирается", delivered: "Получен", disputed: "Открыт спор", refunded: "Возвращён",
@@ -48,11 +51,12 @@ function money(value: number) { return `${value.toLocaleString("ru-RU")} ₽`; }
 function humanStatus(value: string) { return statusLabels[value] ?? value.replaceAll("_", " "); }
 
 export default function AccountDashboard({ initialName, initialEmail, initialIsAdmin, logoutHref, authProvider, initialEmailVerified }: { initialName: string; initialEmail: string; initialIsAdmin: boolean; logoutHref: string; authProvider: "chatgpt" | "standalone"; initialEmailVerified: boolean }) {
-  const [section, setSection] = useState<AccountSection>("overview");
+  const [section, setSection] = useHashSection<AccountSection>("overview", accountSectionIds);
   const [orders, setOrders] = useState<Order[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [subscription, setSubscription] = useState<Subscription>(null);
+  const [plusConfigured, setPlusConfigured] = useState(false);
   const [demandRequests, setDemandRequests] = useState<DemandRequest[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [message, setMessage] = useState("Загружаем данные…");
@@ -61,22 +65,34 @@ export default function AccountDashboard({ initialName, initialEmail, initialIsA
   const [pendingProposal, setPendingProposal] = useState<Proposal | null>(null);
   const [proposalConfirmed, setProposalConfirmed] = useState(false);
   const [legalStatus, setLegalStatus] = useState<LegalStatus>(null);
+  const closeProposalDialog = useCallback(() => { setPendingProposal(null); setProposalConfirmed(false); }, []);
+  const proposalDialogRef = useAccessibleDialog(Boolean(pendingProposal), closeProposalDialog);
 
   const load = useCallback(async () => {
-    const bootstrap = await fetch("/api/account/bootstrap", { method: "POST" });
-    if (!bootstrap.ok) {
-      const result = await bootstrap.json() as { error?: string };
-      setMessage(result.error ?? "Не удалось загрузить профиль. Обновите страницу."); setLoading(false); return;
+    setLoading(true);
+    try {
+      const bootstrap = await fetch("/api/account/bootstrap", { method: "POST" });
+      if (!bootstrap.ok) {
+        const result = await bootstrap.json() as { error?: string };
+        setMessage(result.error ?? "Не удалось загрузить профиль. Обновите страницу."); return;
+      }
+      const bootstrapData = await bootstrap.json() as { legal?: LegalStatus };
+      if (bootstrapData.legal) setLegalStatus(bootstrapData.legal);
+      await fetch("/api/account/preference", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ portal: "buyer" }) }).catch(() => null);
+      const [ordersResponse, alertsResponse, noticesResponse, subscriptionResponse, demandResponse, healthResponse] = await Promise.all([fetch("/api/orders"), fetch("/api/price-alerts"), fetch("/api/notifications"), fetch("/api/subscriptions"), fetch("/api/demand-requests"), fetch("/api/health")]);
+      if (ordersResponse.ok) setOrders(((await ordersResponse.json()) as { orders: Order[] }).orders);
+      if (alertsResponse.ok) setAlerts(((await alertsResponse.json()) as { alerts: Alert[] }).alerts);
+      if (noticesResponse.ok) setNotices(((await noticesResponse.json()) as { notifications: Notice[] }).notifications);
+      if (subscriptionResponse.ok) setSubscription(((await subscriptionResponse.json()) as { subscription: Subscription }).subscription);
+      if (demandResponse.ok) { const demand = await demandResponse.json() as { requests: DemandRequest[]; proposals: Proposal[] }; setDemandRequests(demand.requests); setProposals(demand.proposals); }
+      if (healthResponse.ok) setPlusConfigured(Boolean(((await healthResponse.json()) as { capabilities?: { paymentGateway?: boolean } }).capabilities?.paymentGateway));
+      const failed = [ordersResponse, alertsResponse, noticesResponse, subscriptionResponse, demandResponse].some((response) => !response.ok);
+      setMessage(failed ? "Часть данных временно недоступна. Остальные разделы можно использовать." : "");
+    } catch {
+      setMessage("Нет связи с сервером. Проверьте интернет и нажмите «Повторить».");
+    } finally {
+      setLoading(false);
     }
-    const bootstrapData = await bootstrap.json() as { legal?: LegalStatus };
-    if (bootstrapData.legal) setLegalStatus(bootstrapData.legal);
-    const [ordersResponse, alertsResponse, noticesResponse, subscriptionResponse, demandResponse] = await Promise.all([fetch("/api/orders"), fetch("/api/price-alerts"), fetch("/api/notifications"), fetch("/api/subscriptions"), fetch("/api/demand-requests")]);
-    if (ordersResponse.ok) setOrders(((await ordersResponse.json()) as { orders: Order[] }).orders);
-    if (alertsResponse.ok) setAlerts(((await alertsResponse.json()) as { alerts: Alert[] }).alerts);
-    if (noticesResponse.ok) setNotices(((await noticesResponse.json()) as { notifications: Notice[] }).notifications);
-    if (subscriptionResponse.ok) setSubscription(((await subscriptionResponse.json()) as { subscription: Subscription }).subscription);
-    if (demandResponse.ok) { const demand = await demandResponse.json() as { requests: DemandRequest[]; proposals: Proposal[] }; setDemandRequests(demand.requests); setProposals(demand.proposals); }
-    setMessage(""); setLoading(false);
   }, []);
 
   useEffect(() => { void Promise.resolve().then(load); }, [load]);
@@ -87,56 +103,71 @@ export default function AccountDashboard({ initialName, initialEmail, initialIsA
 
   const createAlert = async (event: FormEvent) => {
     event.preventDefault(); setMessage("Сохраняем правило цены…");
-    const response = await fetch("/api/price-alerts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...alertForm, targetPrice: Number(alertForm.targetPrice) }) });
-    const result = await response.json() as { error?: string };
-    setMessage(response.ok ? "Готово — агент начал следить за ценой" : result.error ?? "Не удалось создать правило");
-    if (response.ok) { setAlertForm({ query: "", targetPrice: "", channel: "in_app" }); await load(); }
+    try {
+      const response = await fetch("/api/price-alerts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...alertForm, targetPrice: Number(alertForm.targetPrice) }) });
+      const result = await response.json() as { error?: string };
+      setMessage(response.ok ? "Готово — агент начал следить за ценой" : result.error ?? "Не удалось создать правило");
+      if (response.ok) { setAlertForm({ query: "", targetPrice: "", channel: "in_app" }); await load(); }
+    } catch { setMessage("Нет связи с сервером. Правило не сохранено — повторите действие."); }
   };
 
   const cancelAlert = async (id: number) => {
     setMessage("Отключаем контроль цены…");
-    const response = await fetch(`/api/price-alerts?id=${id}`, { method: "DELETE" });
-    setMessage(response.ok ? "Контроль цены отключён" : "Не удалось отключить правило");
-    if (response.ok) await load();
+    try {
+      const response = await fetch(`/api/price-alerts?id=${id}`, { method: "DELETE" });
+      setMessage(response.ok ? "Контроль цены отключён" : "Не удалось отключить правило");
+      if (response.ok) await load();
+    } catch { setMessage("Нет связи с сервером. Правило осталось активным."); }
   };
 
   const startTrial = async () => {
+    if (!plusConfigured) { setMessage("Plus пока не подключается: сначала нужен платёжный партнёр. Списаний не будет."); return; }
     setMessage("Подключаем бесплатный период…");
-    const response = await fetch("/api/subscriptions", { method: "POST" });
-    const result = await response.json() as { error?: string; warning?: string };
-    setMessage(response.ok ? result.warning ?? "Plus подключён" : result.error ?? "Не удалось подключить Plus");
-    if (response.ok) await load();
+    try {
+      const response = await fetch("/api/subscriptions", { method: "POST" });
+      const result = await response.json() as { error?: string; warning?: string };
+      setMessage(response.ok ? result.warning ?? "Plus подключён" : result.error ?? "Не удалось подключить Plus");
+      if (response.ok) await load();
+    } catch { setMessage("Нет связи с сервером. Подписка не изменилась."); }
   };
 
   const revokeMarketing = async () => {
     setMessage("Отключаем рекламные сообщения…");
-    const response = await fetch("/api/legal/acceptances", { method: "DELETE" });
-    setMessage(response.ok ? "Рекламные сообщения отключены. Сервисные уведомления о заказах останутся." : "Не удалось изменить согласие");
-    if (response.ok) await load();
+    try {
+      const response = await fetch("/api/legal/acceptances", { method: "DELETE" });
+      setMessage(response.ok ? "Рекламные сообщения отключены. Сервисные уведомления о заказах останутся." : "Не удалось изменить согласие");
+      if (response.ok) await load();
+    } catch { setMessage("Нет связи с сервером. Настройка согласия не изменилась."); }
   };
 
   const resendVerification = async () => {
     setMessage("Отправляем новое письмо…");
-    const response = await fetch("/api/auth/resend-verification", { method: "POST" });
-    const result = await response.json() as { error?: string; queued?: boolean };
-    setMessage(response.ok ? result.queued ? "Письмо подтверждения поставлено в очередь" : "Email уже подтверждён" : result.error ?? "Не удалось отправить письмо");
+    try {
+      const response = await fetch("/api/auth/resend-verification", { method: "POST" });
+      const result = await response.json() as { error?: string; queued?: boolean };
+      setMessage(response.ok ? result.queued ? "Письмо подтверждения поставлено в очередь" : "Email уже подтверждён" : result.error ?? "Не удалось отправить письмо");
+    } catch { setMessage("Нет связи с сервером. Письмо не отправлено."); }
   };
 
   const markNotificationsRead = async () => {
-    const response = await fetch("/api/notifications", { method: "PATCH" });
-    if (response.ok) setNotices((items) => items.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
+    try {
+      const response = await fetch("/api/notifications", { method: "PATCH" });
+      if (response.ok) setNotices((items) => items.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
+    } catch { setMessage("Не удалось обновить уведомления. Повторите позже."); }
   };
 
   const acceptProposal = async (proposalId: number) => {
     if (!proposalConfirmed) { setMessage("Подтвердите продавца и условия конкретной сделки"); return; }
     setMessage("Фиксируем предложение магазина…");
-    const quoteResponse = await fetch("/api/demand-requests", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ proposalId }) });
-    const quote = await quoteResponse.json() as { quoteId?: string; error?: string };
-    if (!quoteResponse.ok || !quote.quoteId) { setMessage(quote.error ?? "Не удалось принять предложение"); return; }
-    const orderResponse = await fetch("/api/orders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteId: quote.quoteId, termsAccepted: true, sellerRoleAccepted: true, transactionConfirmationVersion: TRANSACTION_CONFIRMATION_VERSION }) });
-    const order = await orderResponse.json() as { error?: string };
-    setMessage(orderResponse.ok ? "Предложение принято и защищённая заявка создана. Деньги пока не списывались." : order.error ?? "Не удалось создать заявку");
-    if (orderResponse.ok) { setPendingProposal(null); setProposalConfirmed(false); await load(); setSection("orders"); }
+    try {
+      const quoteResponse = await fetch("/api/demand-requests", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ proposalId }) });
+      const quote = await quoteResponse.json() as { quoteId?: string; error?: string };
+      if (!quoteResponse.ok || !quote.quoteId) { setMessage(quote.error ?? "Не удалось принять предложение"); return; }
+      const orderResponse = await fetch("/api/orders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteId: quote.quoteId, termsAccepted: true, sellerRoleAccepted: true, transactionConfirmationVersion: TRANSACTION_CONFIRMATION_VERSION }) });
+      const order = await orderResponse.json() as { error?: string };
+      setMessage(orderResponse.ok ? "Предложение принято и защищённая заявка создана. Деньги пока не списывались." : order.error ?? "Не удалось создать заявку");
+      if (orderResponse.ok) { setPendingProposal(null); setProposalConfirmed(false); await load(); setSection("orders"); }
+    } catch { setMessage("Нет связи с сервером. Предложение не принято и деньги не списаны."); }
   };
 
   const userInitial = initialName.slice(0, 1).toUpperCase();
@@ -146,19 +177,19 @@ export default function AccountDashboard({ initialName, initialEmail, initialIsA
       <a className="account-logo" href="/"><span>✦</span><div><b>Агент покупок</b><small>Личный кабинет</small></div></a>
       <div className="account-user-mini"><span>{userInitial}</span><div><b>{initialName}</b><small>{initialEmail}</small></div></div>
       <nav aria-label="Разделы личного кабинета">{navigation.map((item) => <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => setSection(item.id)}><span>{item.icon}</span>{item.label}{item.id === "notifications" && unreadNotices > 0 && <em>{Math.min(unreadNotices, 9)}</em>}</button>)}</nav>
-      <div className="account-sidebar-links">{initialIsAdmin && <a href="/admin"><span>⚙</span>Админ-панель</a>}<a href="/seller"><span>◇</span>Кабинет продавца</a><a href="/live-search"><span>⌕</span>Вернуться к поиску</a></div>
+      <div className="account-sidebar-links">{initialIsAdmin && <a href="/admin"><span>⚙</span>Админ-панель</a>}<a href="/seller"><span>◇</span>Переключиться на продавца</a><a href="/live-search"><span>⌕</span>Вернуться к поиску</a></div>
       <a className="account-logout" href={logoutHref}><span>↪</span><div><b>Выйти</b><small>Завершить сеанс</small></div></a>
     </aside>
 
     <section className="account-main">
       <header className="account-topbar"><div><span>Личный кабинет</span><b>{navigation.find((item) => item.id === section)?.label}</b></div><div><a href="/live-search">⌕ Найти товар</a><button onClick={() => setSection("profile")}><span>{userInitial}</span><div><b>{initialName}</b><small>{plusActive ? "Plus активен" : "Базовый тариф"}</small></div></button></div></header>
       <nav className="account-mobile-nav" aria-label="Мобильные разделы">{navigation.map((item) => <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => setSection(item.id)}><span>{item.icon}</span><small>{item.label}</small></button>)}</nav>
-      {message && <div className="account-toast"><span>{loading ? "◌" : "✓"}</span><p>{message}</p><button onClick={() => setMessage("")} aria-label="Закрыть">×</button></div>}
+      {message && <div className="account-toast"><span>{loading ? "◌" : "i"}</span><p>{message}</p>{message.includes("Нет связи") || message.includes("недоступна") ? <button className="account-retry" onClick={() => void load()}>Повторить</button> : null}<button onClick={() => setMessage("")} aria-label="Закрыть">×</button></div>}
 
       <div className="account-content">
         {section === "overview" && <>
           <section className="account-welcome"><div><span>Добро пожаловать, {initialName.split(" ")[0]}</span><h1>Все покупки и выгода — под контролем</h1><p>Агент следит за ценами, сохраняет историю и помогает после покупки.</p><a href="/live-search">Найти лучшее предложение →</a></div><div className="account-welcome-score"><b>{activeAlerts.length + orders.length}</b><span>задач контролирует агент</span><small>Система работает штатно</small></div></section>
-          <section className="account-metrics"><article><span className="blue">▣</span><div><small>Покупки</small><b>{orders.length}</b><p>{orders.filter((item) => !["delivered", "refunded"].includes(item.status)).length} активных</p></div></article><article><span className="green">⌁</span><div><small>Контроль цен</small><b>{activeAlerts.length}</b><p>{alerts.filter((item) => item.status === "triggered").length} целей достигнуто</p></div></article><article><span className="orange">◉</span><div><small>Уведомления</small><b>{notices.length}</b><p>вся история сохранена</p></div></article><article><span className="violet">✦</span><div><small>Подписка</small><b>{plusActive ? "Plus" : "Free"}</b><p>{plusActive ? "преимущества активны" : "можно попробовать"}</p></div></article></section>
+          <section className="account-metrics"><article><span className="blue">▣</span><div><small>Покупки</small><b>{orders.length}</b><p>{orders.filter((item) => !["delivered", "refunded"].includes(item.status)).length} активных</p></div></article><article><span className="green">⌁</span><div><small>Контроль цен</small><b>{activeAlerts.length}</b><p>{alerts.filter((item) => item.status === "triggered").length} целей достигнуто</p></div></article><article><span className="orange">◉</span><div><small>Уведомления</small><b>{notices.length}</b><p>вся история сохранена</p></div></article><article><span className="violet">✦</span><div><small>Подписка</small><b>{plusActive ? "Plus" : "Free"}</b><p>{plusActive ? "преимущества активны" : plusConfigured ? "можно попробовать" : "готовим запуск"}</p></div></article></section>
           <section className="account-overview-grid"><article className="account-card account-recent"><div className="account-card-title"><div><small>Последние покупки</small><h2>Заказы и заявки</h2></div><button onClick={() => setSection("orders")}>Все покупки</button></div>{orders.length === 0 ? <Empty icon="▣" title="Покупок пока нет" text="Найдите товар, сравните предложения и создайте первую защищённую заявку." action="Перейти к поиску" href="/live-search" /> : <div className="account-order-list">{orders.slice(0, 4).map((order) => <OrderRow key={order.id} order={order} />)}</div>}</article>
           <article className="account-card"><div className="account-card-title"><div><small>Безопасное оформление</small><h2>Новая заявка</h2></div></div><p className="account-muted">Цена больше не вводится вручную. Сначала агент фиксирует конкретное предложение, наличие и доставку, затем создаёт заявку.</p><div className="account-safe-actions"><a href="/live-search">⌕ Найти и зафиксировать предложение</a><a className="secondary" href="/live-search#merchant-demand">◇ Запросить цену у малых магазинов</a></div><small className="account-form-note">Это защищает от подмены суммы и случайной покупки другой модификации товара.</small></article></section>
         </>}
@@ -171,12 +202,12 @@ export default function AccountDashboard({ initialName, initialEmail, initialIsA
 
         {section === "notifications" && <section className="account-section"><div className="account-section-head"><div><span>Центр событий</span><h1>Уведомления</h1><p>Изменения цен, заказов, доставки и обращения агента.</p></div>{unreadNotices > 0 && <button onClick={() => void markNotificationsRead()}>Отметить прочитанными</button>}</div><article className="account-card account-notifications">{notices.length === 0 ? <Empty icon="◉" title="Новых событий нет" text="Когда что-то изменится, агент сообщит здесь." /> : notices.map((notice) => { const meta = noticeLabels[notice.template] ?? { title: humanStatus(notice.template), icon: "◉" }; return <div className={notice.readAt ? "read" : "unread"} key={notice.id}><span>{meta.icon}</span><div><b>{meta.title}</b><p>{notice.status === "sent" ? "Доставлено" : "Сохранено в центре уведомлений"}</p></div><time>{new Date(notice.createdAt).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</time></div>; })}</article></section>}
 
-        {section === "plus" && <section className="account-section"><div className="account-section-head"><div><span>Подписка</span><h1>Агент покупок Plus</h1><p>Больше контроля, персональные задания и приоритетная помощь.</p></div></div><section className="account-plus-hero"><div><span>PLUS ✦</span><h2>{plusActive ? "Ваши преимущества активны" : "Покупайте спокойнее и выгоднее"}</h2><p>{plusActive ? `Текущий статус: ${humanStatus(subscription?.status ?? "active")}${subscription?.currentPeriodEnd ? ` · до ${new Date(subscription.currentPeriodEnd).toLocaleDateString("ru-RU")}` : ""}.` : "7 дней бесплатно. Автоматическое списание не включается без отдельного подтверждения."}</p>{!plusActive && <button onClick={startTrial}>Попробовать бесплатно</button>}</div><div className="account-plus-saving"><small>Подтверждённая выгода</small><b>0 ₽</b><p>Начнём считать после первой покупки</p></div></section><div className="account-benefits"><article><span>⌁</span><h3>Больше правил цены</h3><p>Следите за нужными моделями и получайте сигнал в подходящий момент.</p></article><article><span>✦</span><h3>Приоритет агенту</h3><p>Сложные задания и запросы малым магазинам обрабатываются быстрее.</p></article><article><span>◇</span><h3>Расширенная защита</h3><p>Помощь с возвратом, спором и документами по покупке.</p></article></div></section>}
+        {section === "plus" && <section className="account-section"><div className="account-section-head"><div><span>Подписка</span><h1>Агент покупок Plus</h1><p>Больше контроля, персональные задания и приоритетная помощь.</p></div></div><section className="account-plus-hero"><div><span>PLUS ✦</span><h2>{plusActive ? "Ваши преимущества активны" : plusConfigured ? "Покупайте спокойнее и выгоднее" : "Готовим честный запуск Plus"}</h2><p>{plusActive ? `Текущий статус: ${humanStatus(subscription?.status ?? "active")}${subscription?.currentPeriodEnd ? ` · до ${new Date(subscription.currentPeriodEnd).toLocaleDateString("ru-RU")}` : ""}.` : plusConfigured ? "7 дней бесплатно. Автоматическое списание не включается без отдельного подтверждения." : "Подписка станет доступна после подключения платёжного партнёра. Сейчас оформить её или случайно списать деньги невозможно."}</p>{!plusActive && plusConfigured && <button onClick={startTrial}>Попробовать бесплатно</button>}</div><div className="account-plus-saving"><small>Подтверждённая выгода</small><b>0 ₽</b><p>Начнём считать после первой реальной покупки</p></div></section><div className="account-benefits"><article><span>⌁</span><h3>Больше правил цены</h3><p>Следите за нужными моделями и получайте сигнал в подходящий момент.</p></article><article><span>✦</span><h3>Приоритет агенту</h3><p>Сложные задания и запросы малым магазинам обрабатываются быстрее.</p></article><article><span>◇</span><h3>Расширенная защита</h3><p>Помощь с возвратом, спором и документами по покупке.</p></article></div></section>}
 
         {section === "profile" && <section className="account-section"><div className="account-section-head"><div><span>Аккаунт</span><h1>Профиль и безопасность</h1><p>Личные данные, защита входа и управление сеансом.</p></div></div><div className="account-profile-grid"><article className="account-card"><div className="account-profile-person"><span>{userInitial}</span><div><h2>{initialName}</h2><p>{initialEmail}</p><em className={initialEmailVerified ? "" : "pending"}>{initialEmailVerified ? "Email подтверждён" : "Email ожидает подтверждения"}</em></div></div>{authProvider === "standalone" && !initialEmailVerified && <button className="account-secondary-button" onClick={() => void resendVerification()}>Отправить письмо повторно</button>}<div className="account-info-row"><span>Способ входа</span><b>{authProvider === "standalone" ? "Email и защищённый пароль" : "ChatGPT / защищённый вход"}</b></div><div className="account-info-row"><span>Тариф</span><b>{plusActive ? "Plus" : "Базовый"}</b></div><div className="account-info-row"><span>Роль</span><b>{initialIsAdmin ? "Администратор и покупатель" : "Покупатель"}</b></div></article><article className="account-card account-security"><div className="account-card-title"><div><small>Безопасность</small><h2>Текущий сеанс</h2></div><span>Защищён</span></div><p>{authProvider === "standalone" ? "Сервис хранит только стойкий хеш пароля. Сессионный ключ защищён HttpOnly cookie." : "Вход подтверждён платформой ChatGPT. Сервис не получает и не хранит ваш пароль."}</p><div className="account-session"><span>◉</span><div><b>Текущий браузер</b><small>Активен сейчас</small></div><em>Это вы</em></div><a className="account-danger-link" href={logoutHref}>↪ Выйти из аккаунта на этом устройстве</a></article><article className="account-card"><h2>Данные и документы</h2><p className="account-muted">{legalStatus?.complete ? `Принято актуальных документов: ${legalStatus.accepted.filter((item) => item.status === "accepted").length}` : "Проверяем версии документов…"}</p><div className="account-settings-links"><a href="/legal/privacy-policy"><span>▤</span><div><b>Конфиденциальность</b><small>Данные, сроки и получатели</small></div><em>›</em></a><a href="/legal/buyer-agency-offer"><span>◇</span><div><b>Агентская оферта</b><small>Продавец отвечает за товар и чек</small></div><em>›</em></a><a href="/legal#consents"><span>✓</span><div><b>Все принятые документы</b><small>Версии и порядок фиксации</small></div><em>›</em></a></div>{legalStatus?.accepted.some((item) => item.slug === "marketing-consent" && item.status === "accepted") && <button className="account-secondary-button" onClick={() => void revokeMarketing()}>Отключить рекламные сообщения</button>}</article><article className="account-card account-support"><span>?</span><div><h2>Нужна помощь?</h2><p>Обращения по покупке и возврату сохраняются в истории.</p></div><button onClick={() => setSection("notifications")}>Открыть центр помощи</button></article></div></section>}
       </div>
     </section>
-    {pendingProposal && <div className="transaction-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setPendingProposal(null); }}><section className="transaction-modal" role="dialog" aria-modal="true"><header><div><span className="customer-kicker">Предложение малого магазина</span><h2>Подтвердите условия покупки</h2></div><button onClick={() => setPendingProposal(null)} aria-label="Закрыть">×</button></header><div className="transaction-product"><span>◇</span><div><b>{demandRequests.find((item) => item.id === pendingProposal.requestId)?.query ?? "Товар по вашему запросу"}</b><small>Продавец: {pendingProposal.sellerName}</small></div></div><dl><div><dt>Цена товара</dt><dd>{money(pendingProposal.price)}</dd></div><div><dt>Доставка</dt><dd>{money(pendingProposal.deliveryPrice)}</dd></div><div><dt>Гарантия</dt><dd>{pendingProposal.warrantyMonths} мес.</dd></div><div className="total"><dt>Итого</dt><dd>{money(pendingProposal.price + pendingProposal.deliveryPrice)}</dd></div></dl><div className="transaction-roles"><p><span>Продавец</span><b>{pendingProposal.sellerName} продаёт товар, выдаёт чек и отвечает за возврат</b></p><p><span>Агент</span><b>Фиксирует предложение и передаёт ваше поручение</b></p></div><label className="transaction-confirm"><input type="checkbox" checked={proposalConfirmed} onChange={(event) => setProposalConfirmed(event.target.checked)} /><span>Подтверждаю продавца и итоговую сумму. Принимаю <a href="/legal/buyer-agency-offer" target="_blank">агентскую оферту</a> и <a href="/legal/safe-deal-rules" target="_blank">правила безопасной сделки</a>.</span></label><button className="transaction-submit" disabled={!proposalConfirmed} onClick={() => void acceptProposal(pendingProposal.id)}>Подтвердить предложение</button><small>Деньги на этом шаге не списываются.</small></section></div>}
+    {pendingProposal && <div className="transaction-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) closeProposalDialog(); }}><section ref={proposalDialogRef} className="transaction-modal" role="dialog" aria-modal="true" aria-labelledby="proposal-dialog-title" aria-describedby="proposal-dialog-note" tabIndex={-1}><header><div><span className="customer-kicker">Предложение малого магазина</span><h2 id="proposal-dialog-title">Подтвердите условия покупки</h2></div><button onClick={closeProposalDialog} aria-label="Закрыть окно">×</button></header><div className="transaction-product"><span>◇</span><div><b>{demandRequests.find((item) => item.id === pendingProposal.requestId)?.query ?? "Товар по вашему запросу"}</b><small>Продавец: {pendingProposal.sellerName}</small></div></div><dl><div><dt>Цена товара</dt><dd>{money(pendingProposal.price)}</dd></div><div><dt>Доставка</dt><dd>{money(pendingProposal.deliveryPrice)}</dd></div><div><dt>Гарантия</dt><dd>{pendingProposal.warrantyMonths} мес.</dd></div><div className="total"><dt>Итого</dt><dd>{money(pendingProposal.price + pendingProposal.deliveryPrice)}</dd></div></dl><div className="transaction-roles"><p><span>Продавец</span><b>{pendingProposal.sellerName} продаёт товар, выдаёт чек и отвечает за возврат</b></p><p><span>Агент</span><b>Фиксирует предложение и передаёт ваше поручение</b></p></div><label className="transaction-confirm"><input type="checkbox" checked={proposalConfirmed} onChange={(event) => setProposalConfirmed(event.target.checked)} /><span>Подтверждаю продавца и итоговую сумму. Принимаю <a href="/legal/buyer-agency-offer" target="_blank">агентскую оферту</a> и <a href="/legal/safe-deal-rules" target="_blank">правила безопасной сделки</a>.</span></label><button className="transaction-submit" disabled={!proposalConfirmed} onClick={() => void acceptProposal(pendingProposal.id)}>Подтвердить предложение</button><small id="proposal-dialog-note">Деньги на этом шаге не списываются. Для закрытия можно нажать Esc.</small></section></div>}
   </main>;
 }
 
