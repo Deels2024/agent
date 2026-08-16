@@ -68,7 +68,7 @@ test("home header shows an honest sign-in entry for an anonymous visitor", async
   const html = await response.text();
   assert.match(html, /href=["']\/login\?return_to=%2Faccount["']/i);
   assert.match(html, />Войти</i);
-  assert.match(html, /Личный кабинет/i);
+  assert.match(html, /Вход и регистрация/i);
   assert.doesNotMatch(html, /customer-avatar[^>]*>С</i);
 });
 
@@ -106,6 +106,23 @@ test("registration lets a new user start as a buyer or seller without separate a
   assert.match(html, /Покупать выгоднее/i);
   assert.match(html, /Продавать товары/i);
   assert.match(html, /без второго аккаунта/i);
+});
+
+test("direct registration URL opens account creation for an anonymous visitor", async () => {
+  const response = await request("/register?role=buyer&return_to=/account", { headers: { accept: "text/html" }, redirect: "manual" });
+  assert.equal(response.status, 307);
+  const location = new URL(response.headers.get("location"), "http://localhost");
+  assert.equal(location.pathname, "/login");
+  assert.equal(location.searchParams.get("mode"), "register");
+  assert.match(location.searchParams.get("return_to") ?? "", /^\/register\?/);
+});
+
+test("buyer cabinet keeps My stores enabled as a working account section", async () => {
+  const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../app/account/account-dashboard.tsx", import.meta.url), "utf8"));
+  assert.match(source, /id: "marketplaces", label: "Мои магазины"/);
+  assert.match(source, /href="#marketplaces">◎ Мои магазины/);
+  assert.match(source, /Раздел доступен сейчас/);
+  assert.match(source, /\/api\/account\/marketplaces/);
 });
 
 test("standalone mode never trusts a spoofed ChatGPT identity header", async () => {

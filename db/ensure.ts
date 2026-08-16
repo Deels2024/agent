@@ -1,5 +1,7 @@
 import { runtimeEnv } from "../lib/runtime";
 
+const SCHEMA_VERSION = 1;
+const SCHEMA_BATCH_SIZE = 20;
 let initialized: Promise<void> | null = null;
 
 export function ensureMarketplaceSchema() {
@@ -8,7 +10,9 @@ export function ensureMarketplaceSchema() {
   if (!runtime.DB) throw new Error("D1 binding DB is not configured");
 
   initialized = (async () => {
-    await runtime.DB.batch([
+    if (await schemaIsCurrent(runtime.DB)) return;
+
+    const statements = [
     runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS searches (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_email TEXT,
@@ -494,7 +498,10 @@ export function ensureMarketplaceSchema() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     runtime.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS webhook_events_provider_key_uidx ON webhook_events (provider, event_key)"),
-    ]);
+    ];
+    for (let offset = 0; offset < statements.length; offset += SCHEMA_BATCH_SIZE) {
+      await runtime.DB.batch(statements.slice(offset, offset + SCHEMA_BATCH_SIZE));
+    }
     const verificationColumnAdded = await ensureColumn(runtime.DB, "auth_credentials", "email_verified_at", "TEXT");
     if (verificationColumnAdded) await runtime.DB.prepare("UPDATE auth_credentials SET email_verified_at = COALESCE(email_verified_at, updated_at)").run();
     await ensureColumn(runtime.DB, "notifications", "read_at", "TEXT");
@@ -515,6 +522,7 @@ export function ensureMarketplaceSchema() {
     await ensureColumn(runtime.DB, "deliveries", "recipient_json", "TEXT");
     await ensureColumn(runtime.DB, "deliveries", "tracking_number", "TEXT");
     await ensureColumn(runtime.DB, "deliveries", "is_demo", "INTEGER NOT NULL DEFAULT 0");
+    await recordSchemaVersion(runtime.DB);
   })().catch((error) => {
     initialized = null;
     throw error;
@@ -523,10 +531,75 @@ export function ensureMarketplaceSchema() {
   return initialized;
 }
 
+async function schemaIsCurrent(database: D1Database) {
+  try {
+    const marker = await database.prepare("SELECT version FROM app_schema_state WHERE scope = 'marketplace'").first<{ version: number }>();
+    if ((marker?.version ?? 0) >= SCHEMA_VERSION) return true;
+  } catch {
+    // Existing deployments did not have a schema marker yet.
+  }
+
+  try {
+    // Validate the newest tables and every column added outside CREATE TABLE.
+    // LIMIT 0 makes this a fast schema-only query with no user data reads.
+    await database.prepare(`SELECT
+      credentials.email_verified_at,
+      notices.read_at,
+      inventory.weight_grams,
+      inventory.length_cm,
+      inventory.width_cm,
+      inventory.height_cm,
+      deliveries.quote_public_id,
+      deliveries.address_id,
+      deliveries.method,
+      deliveries.service_name,
+      deliveries.tariff_id,
+      deliveries.amount,
+      deliveries.days_min,
+      deliveries.days_max,
+      deliveries.pickup_point_id,
+      deliveries.pickup_point_json,
+      deliveries.recipient_json,
+      deliveries.tracking_number,
+      deliveries.is_demo,
+      buyer_connections.consent_version,
+      buyer_items.source_list
+      FROM auth_credentials credentials
+      JOIN notifications notices ON 1 = 0
+      JOIN inventory_items inventory ON 1 = 0
+      JOIN deliveries deliveries ON 1 = 0
+      JOIN buyer_marketplace_connections buyer_connections ON 1 = 0
+      JOIN buyer_marketplace_items buyer_items ON 1 = 0
+      LIMIT 0`).first();
+    await recordSchemaVersion(database);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function recordSchemaVersion(database: D1Database) {
+  await database.batch([
+    database.prepare(`CREATE TABLE IF NOT EXISTS app_schema_state (
+      scope TEXT PRIMARY KEY,
+      version INTEGER NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    database.prepare(`INSERT INTO app_schema_state (scope, version, updated_at)
+      VALUES ('marketplace', ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(scope) DO UPDATE SET version = excluded.version, updated_at = excluded.updated_at`).bind(SCHEMA_VERSION),
+  ]);
+}
+
 async function ensureColumn(database: D1Database, table: string, column: string, definition: string) {
   const info = await database.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
   if (!info.results.some((item) => item.name === column)) {
-    await database.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+    try {
+      await database.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+    } catch (error) {
+      const current = await database.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+      if (!current.results.some((item) => item.name === column)) throw error;
+    }
     return true;
   }
   return false;

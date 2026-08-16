@@ -234,9 +234,9 @@ export default function Home() {
     <header className="customer-header">
       <a className="customer-brand" href="#search" onClick={(event) => { event.preventDefault(); setTab("search"); }}><span aria-hidden="true">✦</span><b>Агент покупок</b></a>
       <nav aria-label="Основная навигация">{customerTabs.map((item) => <a href={`#${item.id}`} key={item.id} className={tab === item.id ? "active" : ""} aria-current={tab === item.id ? "page" : undefined} onClick={(event) => { event.preventDefault(); setTab(item.id); }}><span aria-hidden="true">{item.icon}</span>{item.label}</a>)}</nav>
-      <a className="customer-account-link" href={accountHref} aria-label={session?.authenticated ? `Открыть кабинет пользователя ${accountName}` : "Войти в личный кабинет"}>
+      <a className="customer-account-link" href={accountHref} aria-label={session?.authenticated ? `Открыть кабинет пользователя ${accountName}` : "Войти или создать аккаунт"}>
         <span className="customer-avatar" aria-hidden="true">{accountInitial}</span>
-        <span><b>{accountName}</b><small>{session?.authenticated ? preferredPortal === "/seller" ? "Кабинет продавца" : "Покупки и профиль" : "Личный кабинет"}</small></span>
+        <span><b>{accountName}</b><small>{session?.authenticated ? preferredPortal === "/seller" ? "Кабинет продавца" : "Покупки и профиль" : "Вход и регистрация"}</small></span>
       </a>
     </header>
 
@@ -260,7 +260,7 @@ export default function Home() {
 
     {tab === "help" && <section className="customer-dashboard"><div className="customer-section-title"><div><span className="customer-kicker">Помощь</span><h1>Помощь по конкретному заказу</h1><p>История обращения сохраняется вместе с заказом и доступна только его владельцу и сотруднику поддержки.</p></div></div><div className="help-grid"><a href="/account"><span>▤</span><b>Проверить заказ</b><small>Оплата и доставка</small></a><a href="/legal/safe-deal-rules#section-7"><span>↻</span><b>Правила возврата</b><small>Условия до покупки</small></a><a href="/account"><span>!</span><b>Открыть спор</b><small>Из личного кабинета</small></a><a href="/legal"><span>◇</span><b>Документы сервиса</b><small>Права и ответственность</small></a></div></section>}
 
-    {tab === "profile" && <section className="customer-dashboard"><div className="profile-banner"><span className="customer-avatar large">{session?.authenticated ? accountInitial : "○"}</span><div><h1>{session?.authenticated ? accountName : "Ваш профиль"}</h1><p>{session?.authenticated ? session.user?.email : "Имя, тариф и данные появятся после защищённого входа"}</p></div></div><article className="customer-account-gateway"><span>○</span><div><h2>Личный кабинет</h2><p>Управляйте покупками, запросами магазинам, уведомлениями, подпиской и выходом из аккаунта.</p></div><a href={accountSectionHref("profile")}>{session?.authenticated ? "Открыть кабинет" : "Войти в кабинет"} →</a></article></section>}
+    {tab === "profile" && <section className="customer-dashboard"><div className="profile-banner"><span className="customer-avatar large">{session?.authenticated ? accountInitial : "○"}</span><div><h1>{session?.authenticated ? accountName : "Ваш профиль"}</h1><p>{session?.authenticated ? session.user?.email : "Имя, тариф и данные появятся после защищённого входа"}</p></div></div><article className="customer-account-gateway"><span>○</span><div><h2>Личный кабинет</h2><p>Управляйте покупками, запросами магазинам, уведомлениями, подпиской и выходом из аккаунта.</p></div><div className="customer-account-gateway-actions"><a href={accountSectionHref("profile")}>{session?.authenticated ? "Открыть кабинет" : "Войти"} →</a>{!session?.authenticated && <a className="secondary" href="/register?role=buyer&return_to=/account">Создать аккаунт</a>}</div></article></section>}
 
     <footer className="customer-footer"><span>Агент покупок · честный выбор без скрытой наценки</span><div><a href={accountHref}>{session?.authenticated ? "Личный кабинет" : "Войти"}</a><a href="/seller">Продавцам</a><a href="/legal">Документы</a><a href="/legal/privacy-policy">Конфиденциальность</a></div></footer>
   </main>;
