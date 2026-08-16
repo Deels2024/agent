@@ -7,6 +7,7 @@ import { useHashSection } from "../ui/use-hash-section";
 
 type AdminSection = "overview" | "users" | "sellers" | "orders" | "disputes" | "risk" | "system" | "audit";
 type Metrics = { users: number; sellers: number; orders: number; openDemand: number; openDisputes: number; elevatedRisks: number; failedNotifications: number };
+type Funnel = { periodDays: number; searches: number; matched: number; buyerActions: number; orders: number; feedbackCount: number; helpfulCount: number; helpfulRate: number | null };
 type Module = { id: number; title: string; description: string; status: string; missing: string[]; route?: string };
 type Seller = { id: number; ownerEmail: string; name: string; inn: string | null; status: string; kycStatus: string; riskScore: number; createdAt: string };
 type User = { id: number; email: string; display_name: string | null; role: string; status: string; created_at: string };
@@ -44,6 +45,7 @@ const orderTransitions: Record<string, string[]> = { created: ["cancelled"], awa
 export default function AdminDashboard({ initialName, initialEmail, logoutHref }: { initialName: string; initialEmail: string; logoutHref: string }) {
   const [section, setSection] = useHashSection<AdminSection>("overview", adminSectionIds);
   const [metrics, setMetrics] = useState<Metrics>({ users: 0, sellers: 0, orders: 0, openDemand: 0, openDisputes: 0, elevatedRisks: 0, failedNotifications: 0 });
+  const [funnel, setFunnel] = useState<Funnel>({ periodDays: 30, searches: 0, matched: 0, buyerActions: 0, orders: 0, feedbackCount: 0, helpfulCount: 0, helpfulRate: null });
   const [modules, setModules] = useState<Module[]>([]);
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -70,10 +72,10 @@ export default function AdminDashboard({ initialName, initialEmail, logoutHref }
       if (!overviewResponse.ok || !sellersResponse.ok || !operationsResponse.ok) {
         setNotice("Не удалось загрузить часть данных. Проверьте подключение базы и обновите страницу."); return;
       }
-      const overview = await overviewResponse.json() as { metrics: Metrics; platform: { modules: Module[] } };
+      const overview = await overviewResponse.json() as { metrics: Metrics; funnel: Funnel; platform: { modules: Module[] } };
       const sellerData = await sellersResponse.json() as { sellers: Seller[] };
       const operations = await operationsResponse.json() as { users: User[]; orders: Order[]; disputes: Dispute[]; risks: Risk[]; audits: Audit[] };
-      setMetrics(overview.metrics); setModules(overview.platform.modules); setSellers(sellerData.sellers);
+      setMetrics(overview.metrics); setFunnel(overview.funnel); setModules(overview.platform.modules); setSellers(sellerData.sellers);
       setUsers(operations.users); setOrders(operations.orders); setDisputes(operations.disputes); setRisks(operations.risks); setAudits(operations.audits);
       setNotice("");
     } catch {
@@ -149,6 +151,10 @@ export default function AdminDashboard({ initialName, initialEmail, logoutHref }
           <div className="admin-heading"><div><span>Сегодня</span><h1>Сервис под контролем</h1><p>Ключевые операции, обращения и риски в одном рабочем пространстве.</p></div><button onClick={() => void load()}>↻ Обновить данные</button></div>
           <section className="admin-metrics"><Metric icon="◎" title="Пользователи" value={metrics.users} hint={`${users.filter((item) => item.status === "active").length} активных`} tone="blue" /><Metric icon="◇" title="Продавцы" value={metrics.sellers} hint={`${metrics.openDemand} открытых запросов покупателей`} tone="violet" /><Metric icon="▣" title="Заказы" value={metrics.orders} hint={`${orders.filter((item) => !["delivered", "refunded", "cancelled"].includes(item.status)).length} в работе`} tone="green" /><Metric icon="!" title="Требуют внимания" value={metrics.openDisputes + metrics.elevatedRisks} hint={`${metrics.openDisputes} споров · ${metrics.elevatedRisks} рисков`} tone="orange" /></section>
           <section className="admin-overview-grid"><article className="admin-card"><div className="admin-card-title"><div><small>Операционный центр</small><h2>Очередь внимания</h2></div></div><QueueRow icon="!" title="Открытые споры" value={metrics.openDisputes} action="Открыть" onClick={() => setSection("disputes")} /><QueueRow icon="△" title="Повышенный риск" value={metrics.elevatedRisks} action="Проверить" onClick={() => setSection("risk")} /><QueueRow icon="◇" title="Проверка продавцов" value={sellers.filter((item) => item.status === "review").length} action="Перейти" onClick={() => setSection("sellers")} /><QueueRow icon="◉" title="Ошибки уведомлений" value={metrics.failedNotifications} action="Система" onClick={() => setSection("system")} /></article><article className="admin-card admin-readiness"><div className="admin-readiness-score"><b>{activeModules}<small>/{modules.length || 15}</small></b><span>модулей готовы</span></div><div><small>Готовность платформы</small><h2>Запуск контролируется честно</h2><p>Внешние партнёры и отсутствующие ключи не маскируются демо-данными.</p><button onClick={() => setSection("system")}>Проверить все модули</button></div></article></section>
+          <section className="admin-insights-grid">
+            <article className="admin-card admin-funnel-card"><div className="admin-card-title"><div><small>Последние {funnel.periodDays} дней</small><h2>Путь к выгодной покупке</h2></div><span>Считается на данных сервиса</span></div><div className="admin-funnel-steps"><FunnelStep label="Поиски" value={funnel.searches} base={funnel.searches} /><FunnelStep label="Есть совпадения" value={funnel.matched} base={funnel.searches} /><FunnelStep label="Контроль цены или запрос продавцам" value={funnel.buyerActions} base={funnel.searches} /><FunnelStep label="Созданные заказы" value={funnel.orders} base={funnel.searches} /></div></article>
+            <article className="admin-card admin-feedback-card"><small>Оценка результатов</small><div><b>{funnel.helpfulRate === null ? "—" : `${funnel.helpfulRate}%`}</b><span>полезных поисков</span></div><p>{funnel.feedbackCount ? `${funnel.helpfulCount} из ${funnel.feedbackCount} оценок положительные.` : "Оценки появятся после первых отзывов покупателей."}</p><a href="/live-search">Проверить поиск →</a></article>
+          </section>
         </>}
 
         {section === "users" && <AdminList title="Пользователи" eyebrow="Доступ и статусы" description="Блокировка ограничивает операции сервиса, но не изменяет список администраторов."><div className="admin-table"><div className="admin-table-row admin-table-head users"><span>Пользователь</span><span>Роль</span><span>Регистрация</span><span>Статус</span><span>Действие</span></div>{users.length === 0 ? <Empty text="Пользователей пока нет" /> : users.map((item) => <div className="admin-table-row users" key={item.id}><div><b>{item.display_name || item.email.split("@")[0]}</b><small>{item.email}</small></div><span>{human(item.role)}</span><span>{date(item.created_at)}</span><Status value={item.status} /><button disabled={busy || item.email.toLowerCase() === initialEmail.toLowerCase()} onClick={() => void runOperation({ action: "user_status", targetId: item.id, status: item.status === "active" ? "suspended" : "active" }, item.status === "active" ? "Пользователь приостановлен" : "Пользователь активирован")}>{item.email.toLowerCase() === initialEmail.toLowerCase() ? "Ваш аккаунт" : item.status === "active" ? "Приостановить" : "Активировать"}</button></div>)}</div></AdminList>}
@@ -171,6 +177,7 @@ export default function AdminDashboard({ initialName, initialEmail, logoutHref }
 }
 
 function Metric({ icon, title, value, hint, tone }: { icon: string; title: string; value: number; hint: string; tone: string }) { return <article><span className={tone}>{icon}</span><div><small>{title}</small><b>{value}</b><p>{hint}</p></div></article>; }
+function FunnelStep({ label, value, base }: { label: string; value: number; base: number }) { const percent = base ? Math.min(100, Math.round((value / base) * 100)) : 0; return <div><header><span>{label}</span><b>{value}<small>{base ? ` · ${percent}%` : ""}</small></b></header><i><em style={{ width: `${percent}%` }} /></i></div>; }
 function QueueRow({ icon, title, value, action, onClick }: { icon: string; title: string; value: number; action: string; onClick: () => void }) { return <div className="admin-queue-row"><span>{icon}</span><div><b>{title}</b><small>{value === 0 ? "Нет новых событий" : `${value} требуют решения`}</small></div><strong>{value}</strong><button onClick={onClick}>{action}</button></div>; }
 function Status({ value }: { value: string }) { return <span className={`admin-status ${value}`}>{human(value)}</span>; }
 function Empty({ text }: { text: string }) { return <div className="admin-empty"><span>✓</span><h2>{text}</h2><p>Новые данные появятся здесь автоматически.</p></div>; }

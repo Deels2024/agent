@@ -23,6 +23,16 @@ export function ensureMarketplaceSchema() {
     )`),
     runtime.DB.prepare("CREATE INDEX IF NOT EXISTS searches_created_at_idx ON searches (created_at)"),
     runtime.DB.prepare("CREATE INDEX IF NOT EXISTS searches_user_created_idx ON searches (user_email, created_at)"),
+    runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS product_feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      search_id INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
+      user_email TEXT,
+      sentiment TEXT NOT NULL,
+      reason TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS product_feedback_search_idx ON product_feedback (search_id, created_at)"),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS product_feedback_sentiment_idx ON product_feedback (sentiment, created_at)"),
     runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS offers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       search_id INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
@@ -157,6 +167,65 @@ export function ensureMarketplaceSchema() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     runtime.DB.prepare("CREATE INDEX IF NOT EXISTS marketplace_connections_seller_idx ON marketplace_connections (seller_id, provider)"),
+    runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS buyer_marketplace_connections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_email TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      account_label TEXT NOT NULL DEFAULT 'Ozon',
+      status TEXT NOT NULL DEFAULT 'not_connected',
+      auth_method TEXT NOT NULL DEFAULT 'external_login',
+      scopes_json TEXT NOT NULL DEFAULT '[]',
+      item_count INTEGER NOT NULL DEFAULT 0,
+      consent_version TEXT,
+      consented_at TEXT,
+      last_sync_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    runtime.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS buyer_marketplace_connections_user_provider_uidx ON buyer_marketplace_connections (user_email, provider)"),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS buyer_marketplace_connections_user_status_idx ON buyer_marketplace_connections (user_email, status)"),
+    runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS buyer_marketplace_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      connection_id INTEGER NOT NULL REFERENCES buyer_marketplace_connections(id) ON DELETE CASCADE,
+      user_email TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      source_list TEXT NOT NULL DEFAULT 'shared_link',
+      external_id TEXT NOT NULL,
+      product_name TEXT NOT NULL,
+      product_url TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    runtime.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS buyer_marketplace_items_connection_external_uidx ON buyer_marketplace_items (connection_id, external_id, source_list)"),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS buyer_marketplace_items_user_provider_idx ON buyer_marketplace_items (user_email, provider, status)"),
+    runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS delivery_connections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      seller_id INTEGER NOT NULL REFERENCES sellers(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL DEFAULT 'apiship',
+      account_label TEXT NOT NULL,
+      secret_ciphertext TEXT,
+      secret_iv TEXT,
+      status TEXT NOT NULL DEFAULT 'encrypted',
+      last_checked_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS delivery_connections_seller_idx ON delivery_connections (seller_id, provider)"),
+    runtime.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS delivery_connections_seller_provider_uidx ON delivery_connections (seller_id, provider)"),
+    runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS seller_delivery_profiles (
+      seller_id INTEGER PRIMARY KEY REFERENCES sellers(id) ON DELETE CASCADE,
+      contact_name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      country_code TEXT NOT NULL DEFAULT 'RU',
+      postal_code TEXT,
+      region TEXT,
+      city TEXT NOT NULL,
+      address_line TEXT NOT NULL,
+      comment TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
     runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS inventory_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       seller_id INTEGER NOT NULL REFERENCES sellers(id) ON DELETE CASCADE,
@@ -165,6 +234,10 @@ export function ensureMarketplaceSchema() {
       barcode TEXT,
       price REAL NOT NULL,
       stock INTEGER NOT NULL DEFAULT 0,
+      weight_grams INTEGER,
+      length_cm INTEGER,
+      width_cm INTEGER,
+      height_cm INTEGER,
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -271,18 +344,73 @@ export function ensureMarketplaceSchema() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     runtime.DB.prepare("CREATE INDEX IF NOT EXISTS payment_intents_order_idx ON payment_intents (order_id, status)"),
+    runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS delivery_addresses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_email TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT 'Основной адрес',
+      recipient_name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      country_code TEXT NOT NULL DEFAULT 'RU',
+      postal_code TEXT,
+      region TEXT,
+      city TEXT NOT NULL,
+      address_line TEXT NOT NULL,
+      apartment TEXT,
+      entrance TEXT,
+      floor TEXT,
+      comment TEXT,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS delivery_addresses_user_idx ON delivery_addresses (user_email, is_default)"),
+    runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS delivery_quotes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      public_id TEXT NOT NULL UNIQUE,
+      order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      buyer_email TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      provider_label TEXT NOT NULL,
+      service_name TEXT NOT NULL,
+      method TEXT NOT NULL,
+      tariff_id TEXT NOT NULL,
+      amount REAL NOT NULL,
+      days_min INTEGER NOT NULL,
+      days_max INTEGER NOT NULL,
+      pickup_point_ids_json TEXT NOT NULL DEFAULT '[]',
+      is_demo INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS delivery_quotes_order_idx ON delivery_quotes (order_id, status)"),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS delivery_quotes_buyer_idx ON delivery_quotes (buyer_email, expires_at)"),
     runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS deliveries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
       provider TEXT NOT NULL,
       external_id TEXT,
+      quote_public_id TEXT,
+      address_id INTEGER REFERENCES delivery_addresses(id) ON DELETE SET NULL,
+      method TEXT NOT NULL DEFAULT 'courier',
+      service_name TEXT,
+      tariff_id TEXT,
+      amount REAL NOT NULL DEFAULT 0,
+      days_min INTEGER,
+      days_max INTEGER,
+      pickup_point_id TEXT,
+      pickup_point_json TEXT,
+      recipient_json TEXT,
+      tracking_number TEXT,
       status TEXT NOT NULL DEFAULT 'created',
       eta TEXT,
       tracking_url TEXT,
+      is_demo INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
     runtime.DB.prepare("CREATE INDEX IF NOT EXISTS deliveries_order_idx ON deliveries (order_id, status)"),
+    runtime.DB.prepare("CREATE INDEX IF NOT EXISTS deliveries_external_idx ON deliveries (provider, external_id)"),
     runtime.DB.prepare(`CREATE TABLE IF NOT EXISTS subscriptions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_email TEXT NOT NULL,
@@ -370,6 +498,23 @@ export function ensureMarketplaceSchema() {
     const verificationColumnAdded = await ensureColumn(runtime.DB, "auth_credentials", "email_verified_at", "TEXT");
     if (verificationColumnAdded) await runtime.DB.prepare("UPDATE auth_credentials SET email_verified_at = COALESCE(email_verified_at, updated_at)").run();
     await ensureColumn(runtime.DB, "notifications", "read_at", "TEXT");
+    await ensureColumn(runtime.DB, "inventory_items", "weight_grams", "INTEGER");
+    await ensureColumn(runtime.DB, "inventory_items", "length_cm", "INTEGER");
+    await ensureColumn(runtime.DB, "inventory_items", "width_cm", "INTEGER");
+    await ensureColumn(runtime.DB, "inventory_items", "height_cm", "INTEGER");
+    await ensureColumn(runtime.DB, "deliveries", "quote_public_id", "TEXT");
+    await ensureColumn(runtime.DB, "deliveries", "address_id", "INTEGER REFERENCES delivery_addresses(id) ON DELETE SET NULL");
+    await ensureColumn(runtime.DB, "deliveries", "method", "TEXT NOT NULL DEFAULT 'courier'");
+    await ensureColumn(runtime.DB, "deliveries", "service_name", "TEXT");
+    await ensureColumn(runtime.DB, "deliveries", "tariff_id", "TEXT");
+    await ensureColumn(runtime.DB, "deliveries", "amount", "REAL NOT NULL DEFAULT 0");
+    await ensureColumn(runtime.DB, "deliveries", "days_min", "INTEGER");
+    await ensureColumn(runtime.DB, "deliveries", "days_max", "INTEGER");
+    await ensureColumn(runtime.DB, "deliveries", "pickup_point_id", "TEXT");
+    await ensureColumn(runtime.DB, "deliveries", "pickup_point_json", "TEXT");
+    await ensureColumn(runtime.DB, "deliveries", "recipient_json", "TEXT");
+    await ensureColumn(runtime.DB, "deliveries", "tracking_number", "TEXT");
+    await ensureColumn(runtime.DB, "deliveries", "is_demo", "INTEGER NOT NULL DEFAULT 0");
   })().catch((error) => {
     initialized = null;
     throw error;

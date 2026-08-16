@@ -14,6 +14,10 @@ export type CatalogItem = {
   barcode: string | null;
   price: number;
   stock: number;
+  weightGrams: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
   status: string;
 };
 
@@ -24,6 +28,10 @@ type BulkRow = {
   externalId: string;
   price: number;
   stock: number;
+  weightGrams: number;
+  lengthCm: number;
+  widthCm: number;
+  heightCm: number;
   error?: string;
 };
 
@@ -34,7 +42,7 @@ type Props = {
   onMessage: (message: string) => void;
 };
 
-const emptyItem = { productName: "", barcode: "", externalId: "", price: "", stock: "1" };
+const emptyItem = { productName: "", barcode: "", externalId: "", price: "", stock: "1", weightGrams: "", lengthCm: "", widthCm: "", heightCm: "" };
 
 function productVisibility(seller: CatalogSeller, item: CatalogItem) {
   if (item.status !== "active") return { code: "paused", label: "Снят с поиска", detail: "Можно вернуть в выдачу одним нажатием." };
@@ -88,8 +96,12 @@ function parseCatalog(text: string): BulkRow[] {
     externalId: find("артикул", "артикулпродавца", "sku", "externalid"),
     price: find("цена", "price"),
     stock: find("остаток", "количество", "stock", "quantity"),
+    weightGrams: find("весг", "весграмм", "weight", "weightgrams"),
+    lengthCm: find("длинасм", "length", "lengthcm"),
+    widthCm: find("ширинасм", "width", "widthcm"),
+    heightCm: find("высотасм", "height", "heightcm"),
   };
-  if (columns.productName < 0 || columns.price < 0 || columns.stock < 0) return [];
+  if ([columns.productName, columns.price, columns.stock, columns.weightGrams, columns.lengthCm, columns.widthCm, columns.heightCm].some((column) => column < 0)) return [];
 
   return lines.slice(1, 101).map((line, index) => {
     const cells = splitDelimitedLine(line, delimiter);
@@ -98,13 +110,19 @@ function parseCatalog(text: string): BulkRow[] {
     const externalId = columns.externalId >= 0 ? (cells[columns.externalId] ?? "").trim() : "";
     const price = parseNumber(cells[columns.price] ?? "");
     const stock = Math.floor(parseNumber(cells[columns.stock] ?? ""));
+    const weightGrams = Math.floor(parseNumber(cells[columns.weightGrams] ?? ""));
+    const lengthCm = Math.ceil(parseNumber(cells[columns.lengthCm] ?? ""));
+    const widthCm = Math.ceil(parseNumber(cells[columns.widthCm] ?? ""));
+    const heightCm = Math.ceil(parseNumber(cells[columns.heightCm] ?? ""));
     const errors = [
       productName.length < 3 ? "короткое название" : "",
       !Number.isFinite(price) || price <= 0 ? "неверная цена" : "",
       !Number.isFinite(stock) || stock < 0 ? "неверный остаток" : "",
       barcode && (barcode.length < 8 || barcode.length > 14) ? "штрих-код должен содержать 8–14 цифр" : "",
+      !Number.isFinite(weightGrams) || weightGrams < 1 ? "неверный вес" : "",
+      [lengthCm, widthCm, heightCm].some((size) => !Number.isFinite(size) || size < 1) ? "неверные габариты" : "",
     ].filter(Boolean);
-    return { row: index + 2, productName, barcode, externalId, price, stock, error: errors.join(", ") || undefined };
+    return { row: index + 2, productName, barcode, externalId, price, stock, weightGrams, lengthCm, widthCm, heightCm, error: errors.join(", ") || undefined };
   });
 }
 
@@ -115,7 +133,7 @@ export default function ProductCatalog({ seller, items, onReload, onMessage }: P
   const [bulkFileName, setBulkFileName] = useState("");
   const [filter, setFilter] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState({ price: "", stock: "" });
+  const [editForm, setEditForm] = useState({ price: "", stock: "", weightGrams: "", lengthCm: "", widthCm: "", heightCm: "" });
   const [busy, setBusy] = useState(false);
 
   const visibleCount = items.filter((item) => productVisibility(seller, item).code === "searchable").length;
@@ -125,7 +143,7 @@ export default function ProductCatalog({ seller, items, onReload, onMessage }: P
     if (!normalized) return items;
     return items.filter((item) => [item.productName, item.barcode, item.externalId].some((value) => value?.toLocaleLowerCase("ru").includes(normalized)));
   }, [filter, items]);
-  const manualProgress = Math.min(100, (form.productName.trim().length >= 3 ? 40 : 0) + (Number(form.price) > 0 ? 35 : 0) + (Number(form.stock) >= 0 && form.stock !== "" ? 25 : 0));
+  const manualProgress = Math.min(100, (form.productName.trim().length >= 3 ? 30 : 0) + (Number(form.price) > 0 ? 25 : 0) + (Number(form.stock) >= 0 && form.stock !== "" ? 15 : 0) + (Number(form.weightGrams) > 0 ? 15 : 0) + ([form.lengthCm, form.widthCm, form.heightCm].every((value) => Number(value) > 0) ? 15 : 0));
   const validBulkRows = bulkRows.filter((row) => !row.error);
 
   const addItem = async (event: FormEvent) => {
@@ -162,7 +180,7 @@ export default function ProductCatalog({ seller, items, onReload, onMessage }: P
     const response = await fetch("/api/sellers/inventory", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ items: validBulkRows.map((row) => ({ productName: row.productName, barcode: row.barcode, externalId: row.externalId, price: row.price, stock: row.stock })) }),
+      body: JSON.stringify({ items: validBulkRows.map((row) => ({ productName: row.productName, barcode: row.barcode, externalId: row.externalId, price: row.price, stock: row.stock, weightGrams: row.weightGrams, lengthCm: row.lengthCm, widthCm: row.widthCm, heightCm: row.heightCm })) }),
     });
     const result = await response.json() as { error?: string; createdCount?: number };
     onMessage(response.ok ? "Добавлено товаров: " + (result.createdCount ?? validBulkRows.length) : result.error ?? "Не удалось загрузить товары");
@@ -175,7 +193,7 @@ export default function ProductCatalog({ seller, items, onReload, onMessage }: P
   };
 
   const downloadTemplate = () => {
-    const content = "\uFEFFНазвание;Штрих-код;Артикул;Цена;Остаток\nApple iPhone 15 Pro 256 GB;194253941234;IPH15P256;99990;3\n";
+    const content = "\uFEFFНазвание;Штрих-код;Артикул;Цена;Остаток;Вес г;Длина см;Ширина см;Высота см\nApple iPhone 15 Pro 256 GB;194253941234;IPH15P256;99990;3;650;22;14;8\n";
     const url = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
@@ -186,14 +204,14 @@ export default function ProductCatalog({ seller, items, onReload, onMessage }: P
 
   const startEdit = (item: CatalogItem) => {
     setEditingId(item.id);
-    setEditForm({ price: String(item.price), stock: String(item.stock) });
+    setEditForm({ price: String(item.price), stock: String(item.stock), weightGrams: String(item.weightGrams ?? ""), lengthCm: String(item.lengthCm ?? ""), widthCm: String(item.widthCm ?? ""), heightCm: String(item.heightCm ?? "") });
   };
 
   const updateItem = async (item: CatalogItem, status = item.status) => {
     setBusy(true);
     onMessage("Сохраняем изменения…");
     const payload = editingId === item.id
-      ? { id: item.id, price: Number(editForm.price), stock: Number(editForm.stock), status }
+      ? { id: item.id, price: Number(editForm.price), stock: Number(editForm.stock), weightGrams: Number(editForm.weightGrams), lengthCm: Number(editForm.lengthCm), widthCm: Number(editForm.widthCm), heightCm: Number(editForm.heightCm), status }
       : { id: item.id, status };
     const response = await fetch("/api/sellers/inventory", {
       method: "PATCH",
@@ -209,7 +227,7 @@ export default function ProductCatalog({ seller, items, onReload, onMessage }: P
     setBusy(false);
   };
 
-  return <article className="portal-panel portal-wide seller-catalog">
+  return <article id="seller-catalog" className="portal-panel portal-wide seller-catalog">
     <div className="seller-catalog-head">
       <div>
         <span className="customer-kicker">Каталог магазина</span>
@@ -251,13 +269,20 @@ export default function ProductCatalog({ seller, items, onReload, onMessage }: P
               <input type="number" min="0" max="1000000" step="1" value={form.stock} onChange={(event) => setForm({ ...form, stock: event.target.value })} required />
             </label>
           </div>
+          <div className="seller-package-fields">
+            <label>Вес с упаковкой, г<input type="number" min="1" max="1000000" step="1" value={form.weightGrams} onChange={(event) => setForm({ ...form, weightGrams: event.target.value })} placeholder="650" required /></label>
+            <label>Длина, см<input type="number" min="1" max="500" step="1" value={form.lengthCm} onChange={(event) => setForm({ ...form, lengthCm: event.target.value })} placeholder="22" required /></label>
+            <label>Ширина, см<input type="number" min="1" max="500" step="1" value={form.widthCm} onChange={(event) => setForm({ ...form, widthCm: event.target.value })} placeholder="14" required /></label>
+            <label>Высота, см<input type="number" min="1" max="500" step="1" value={form.heightCm} onChange={(event) => setForm({ ...form, heightCm: event.target.value })} placeholder="8" required /></label>
+          </div>
+          <p className="seller-package-note">Вес и габариты нужны, чтобы покупатель сразу увидел точную стоимость доставки и доступные ПВЗ.</p>
           <div className="seller-search-rule"><span>✦</span><p><b>После добавления</b>{seller.kycStatus === "verified" && seller.status === "active" ? "Товар с остатком сразу появится в поиске покупателей." : "Карточка сохранится, а в поиск попадёт после проверки магазина."}</p></div>
           <button disabled={busy || manualProgress < 100}>{busy ? "Сохраняем…" : "Добавить товар"}</button>
         </form> : <div className="seller-bulk-import">
           <div className="seller-upload-zone">
             <span>⇧</span>
             <h3>{bulkFileName || "Загрузите каталог CSV"}</h3>
-            <p>До 100 товаров за раз. Обязательные столбцы: Название, Цена, Остаток.</p>
+            <p>До 100 товаров за раз. Обязательны название, цена, остаток, вес и три габарита упаковки.</p>
             <label><input type="file" accept=".csv,text/csv" onChange={readBulkFile} />Выбрать CSV</label>
             <button type="button" onClick={downloadTemplate}>Скачать шаблон</button>
           </div>
@@ -294,6 +319,10 @@ export default function ProductCatalog({ seller, items, onReload, onMessage }: P
           {editing ? <div className="seller-inventory-edit">
             <label>Цена<input type="number" min="1" step="0.01" value={editForm.price} onChange={(event) => setEditForm({ ...editForm, price: event.target.value })} /></label>
             <label>Остаток<input type="number" min="0" step="1" value={editForm.stock} onChange={(event) => setEditForm({ ...editForm, stock: event.target.value })} /></label>
+            <label>Вес, г<input type="number" min="1" step="1" value={editForm.weightGrams} onChange={(event) => setEditForm({ ...editForm, weightGrams: event.target.value })} /></label>
+            <label>Длина, см<input type="number" min="1" step="1" value={editForm.lengthCm} onChange={(event) => setEditForm({ ...editForm, lengthCm: event.target.value })} /></label>
+            <label>Ширина, см<input type="number" min="1" step="1" value={editForm.widthCm} onChange={(event) => setEditForm({ ...editForm, widthCm: event.target.value })} /></label>
+            <label>Высота, см<input type="number" min="1" step="1" value={editForm.heightCm} onChange={(event) => setEditForm({ ...editForm, heightCm: event.target.value })} /></label>
           </div> : <div className="seller-inventory-numbers"><span><small>Цена</small><b>{item.price.toLocaleString("ru-RU")} ₽</b></span><span><small>Остаток</small><b>{item.stock} шт.</b></span></div>}
           <div className={"seller-visibility " + visibility.code} title={visibility.detail}><i /> <span><b>{visibility.label}</b><small>{visibility.detail}</small></span></div>
           <div className="seller-inventory-actions">
