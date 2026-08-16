@@ -19,11 +19,17 @@ function parseInventoryItem(raw: unknown, row: number) {
   const price = Number(value.price);
   const stockValue = Number(value.stock);
   const stock = Math.floor(stockValue);
+  const weightGrams = Math.floor(Number(value.weightGrams));
+  const lengthCm = Math.ceil(Number(value.lengthCm));
+  const widthCm = Math.ceil(Number(value.widthCm));
+  const heightCm = Math.ceil(Number(value.heightCm));
   const problems = [
     productName.length < 3 ? "название должно содержать минимум 3 символа" : "",
     !Number.isFinite(price) || price <= 0 || price > 10_000_000 ? "цена должна быть от 1 до 10 000 000 ₽" : "",
     !Number.isFinite(stockValue) || !Number.isInteger(stockValue) || stock < 0 || stock > 1_000_000 ? "остаток должен быть целым числом от 0 до 1 000 000" : "",
     barcode && (barcode.length < 8 || barcode.length > 14) ? "штрих-код должен содержать 8–14 цифр" : "",
+    !Number.isInteger(weightGrams) || weightGrams < 1 || weightGrams > 1_000_000 ? "укажите вес упаковки в граммах" : "",
+    [lengthCm, widthCm, heightCm].some((size) => !Number.isInteger(size) || size < 1 || size > 500) ? "укажите габариты упаковки от 1 до 500 см" : "",
   ].filter(Boolean);
   if (problems.length) return { error: "Строка " + row + ": " + problems.join(", ") };
   return {
@@ -33,6 +39,10 @@ function parseInventoryItem(raw: unknown, row: number) {
       externalId: externalId || null,
       price: Math.round(price * 100) / 100,
       stock,
+      weightGrams,
+      lengthCm,
+      widthCm,
+      heightCm,
     },
   };
 }
@@ -92,7 +102,7 @@ export async function PATCH(request: Request) {
     const [existing] = await getDb().select().from(inventoryItems).where(and(eq(inventoryItems.id, id), eq(inventoryItems.sellerId, seller.id))).limit(1);
     if (!existing) return Response.json({ error: "Товар не найден" }, { status: 404 });
 
-    const updates: { price?: number; stock?: number; status?: string; updatedAt: string } = { updatedAt: new Date().toISOString() };
+    const updates: { price?: number; stock?: number; weightGrams?: number; lengthCm?: number; widthCm?: number; heightCm?: number; status?: string; updatedAt: string } = { updatedAt: new Date().toISOString() };
     if (body.price !== undefined) {
       const price = Number(body.price);
       if (!Number.isFinite(price) || price <= 0 || price > 10_000_000) return Response.json({ error: "Цена должна быть от 1 до 10 000 000 ₽" }, { status: 400 });
@@ -102,6 +112,12 @@ export async function PATCH(request: Request) {
       const stock = Number(body.stock);
       if (!Number.isInteger(stock) || stock < 0 || stock > 1_000_000) return Response.json({ error: "Остаток должен быть целым числом от 0 до 1 000 000" }, { status: 400 });
       updates.stock = stock;
+    }
+    for (const [field, maximum] of [["weightGrams", 1_000_000], ["lengthCm", 500], ["widthCm", 500], ["heightCm", 500]] as const) {
+      if (body[field] === undefined) continue;
+      const value = Number(body[field]);
+      if (!Number.isInteger(value) || value < 1 || value > maximum) return Response.json({ error: field === "weightGrams" ? "Вес должен быть указан в граммах" : "Габариты должны быть от 1 до 500 см" }, { status: 400 });
+      updates[field] = value;
     }
     if (body.status !== undefined) {
       const status = cleanText(body.status, 20);

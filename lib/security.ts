@@ -23,6 +23,24 @@ export async function encryptCredentials(credentials: Record<string, string>) {
   return { ciphertext: bytesToBase64(new Uint8Array(ciphertext)), iv: bytesToBase64(iv) };
 }
 
+export async function decryptCredentials(ciphertext: string | null, encodedIv: string | null) {
+  if (!ciphertext || !encodedIv) throw new Error("credential_payload_missing");
+  const encodedKey = runtimeValue("CREDENTIAL_ENCRYPTION_KEY");
+  if (!encodedKey) throw new Error("credential_encryption_not_configured");
+  const rawKey = base64ToBytes(encodedKey);
+  if (rawKey.byteLength !== 32) throw new Error("credential_encryption_key_invalid");
+  const key = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["decrypt"]);
+  try {
+    const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytes(encodedIv) }, key, base64ToBytes(ciphertext));
+    const parsed = JSON.parse(new TextDecoder().decode(plaintext)) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("credential_payload_invalid");
+    return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  } catch (error) {
+    if (error instanceof Error && error.message === "credential_payload_invalid") throw error;
+    throw new Error("credential_decryption_failed");
+  }
+}
+
 async function digest(value: string) {
   const result = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(result)).map((byte) => byte.toString(16).padStart(2, "0")).join("");

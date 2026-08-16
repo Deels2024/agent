@@ -68,7 +68,7 @@ test("home header shows an honest sign-in entry for an anonymous visitor", async
   const html = await response.text();
   assert.match(html, /href=["']\/login\?return_to=%2Faccount["']/i);
   assert.match(html, />Войти</i);
-  assert.match(html, /Личный кабинет/i);
+  assert.match(html, /Вход и регистрация/i);
   assert.doesNotMatch(html, /customer-avatar[^>]*>С</i);
 });
 
@@ -108,6 +108,23 @@ test("registration lets a new user start as a buyer or seller without separate a
   assert.match(html, /без второго аккаунта/i);
 });
 
+test("direct registration URL opens account creation for an anonymous visitor", async () => {
+  const response = await request("/register?role=buyer&return_to=/account", { headers: { accept: "text/html" }, redirect: "manual" });
+  assert.equal(response.status, 307);
+  const location = new URL(response.headers.get("location"), "http://localhost");
+  assert.equal(location.pathname, "/login");
+  assert.equal(location.searchParams.get("mode"), "register");
+  assert.match(location.searchParams.get("return_to") ?? "", /^\/register\?/);
+});
+
+test("buyer cabinet keeps My stores enabled as a working account section", async () => {
+  const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../app/account/account-dashboard.tsx", import.meta.url), "utf8"));
+  assert.match(source, /id: "marketplaces", label: "Мои магазины"/);
+  assert.match(source, /href="#marketplaces">◎ Мои магазины/);
+  assert.match(source, /Раздел доступен сейчас/);
+  assert.match(source, /\/api\/account\/marketplaces/);
+});
+
 test("standalone mode never trusts a spoofed ChatGPT identity header", async () => {
   const response = await request("/api/admin/overview", {
     headers: { "oai-authenticated-user-email": "admin@example.test" },
@@ -130,10 +147,21 @@ for (const [method, path] of [
   ["POST", "/api/account/bootstrap"],
   ["GET", "/api/account/destination"],
   ["POST", "/api/account/preference"],
+  ["GET", "/api/account/marketplaces"],
+  ["POST", "/api/account/marketplaces"],
+  ["DELETE", "/api/account/marketplaces"],
   ["POST", "/api/orders"],
+  ["POST", "/api/delivery/addresses"],
+  ["POST", "/api/delivery/options"],
+  ["POST", "/api/delivery/pickup-points"],
+  ["POST", "/api/delivery/select"],
+  ["POST", "/api/deliveries"],
   ["POST", "/api/price-alerts"],
   ["POST", "/api/sellers/profile"],
   ["POST", "/api/sellers/inventory"],
+  ["POST", "/api/sellers/delivery"],
+  ["POST", "/api/sellers/delivery/connections"],
+  ["GET", "/api/sellers/orders"],
   ["PATCH", "/api/sellers/inventory"],
   ["POST", "/api/legal/register"],
   ["GET", "/api/admin/overview"],
@@ -146,11 +174,26 @@ for (const [method, path] of [
   });
 }
 
+test("GET /api/delivery/providers exposes the supported network without secrets", async () => {
+  const response = await request("/api/delivery/providers");
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.gateway, "ApiShip");
+  assert.equal(payload.configured, false);
+  assert.ok(payload.carriers.length >= 6);
+  assert.equal(JSON.stringify(payload).includes("apiToken"), false);
+});
+
 test("payment and delivery webhooks reject unsigned events", async () => {
   for (const path of ["/api/webhooks/payment", "/api/webhooks/delivery"]) {
     const response = await request(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ externalId: "test", status: "succeeded" }) });
     assert.equal(response.status, 401);
   }
+});
+
+test("delivery status job rejects requests without the cron secret", async () => {
+  const response = await request("/api/jobs/deliveries", { method: "POST" });
+  assert.equal(response.status, 401);
 });
 
 test("GET /api/marketplaces/status exposes honest configuration state", async () => {
@@ -194,6 +237,16 @@ test("POST /api/search returns ranked demo offers without external credentials",
     payload.offers.map((offer) => offer.price),
     [...payload.offers].map((offer) => offer.price).sort((a, b) => a - b),
   );
+});
+
+test("POST /api/feedback validates the search reference and sentiment before storage", async () => {
+  const response = await request("/api/feedback", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ searchId: 0, sentiment: "maybe" }),
+  });
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /оценк/i);
 });
 
 test("demo catalog does not show an implausibly cheap premium phone", async () => {

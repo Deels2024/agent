@@ -17,6 +17,18 @@ export const searches = sqliteTable("searches", {
   index("searches_user_created_idx").on(table.userEmail, table.createdAt),
 ]);
 
+export const productFeedback = sqliteTable("product_feedback", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  searchId: integer("search_id").notNull().references(() => searches.id, { onDelete: "cascade" }),
+  userEmail: text("user_email"),
+  sentiment: text("sentiment").notNull(),
+  reason: text("reason"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("product_feedback_search_idx").on(table.searchId, table.createdAt),
+  index("product_feedback_sentiment_idx").on(table.sentiment, table.createdAt),
+]);
+
 export const offers = sqliteTable("offers", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   searchId: integer("search_id").notNull().references(() => searches.id, { onDelete: "cascade" }),
@@ -188,6 +200,72 @@ export const marketplaceConnections = sqliteTable("marketplace_connections", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [index("marketplace_connections_seller_idx").on(table.sellerId, table.provider)]);
 
+export const buyerMarketplaceConnections = sqliteTable("buyer_marketplace_connections", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userEmail: text("user_email").notNull(),
+  provider: text("provider").notNull(),
+  accountLabel: text("account_label").notNull().default("Ozon"),
+  status: text("status").notNull().default("not_connected"),
+  authMethod: text("auth_method").notNull().default("external_login"),
+  scopesJson: text("scopes_json").notNull().default("[]"),
+  itemCount: integer("item_count").notNull().default(0),
+  consentVersion: text("consent_version"),
+  consentedAt: text("consented_at"),
+  lastSyncAt: text("last_sync_at"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("buyer_marketplace_connections_user_provider_uidx").on(table.userEmail, table.provider),
+  index("buyer_marketplace_connections_user_status_idx").on(table.userEmail, table.status),
+]);
+
+export const buyerMarketplaceItems = sqliteTable("buyer_marketplace_items", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  connectionId: integer("connection_id").notNull().references(() => buyerMarketplaceConnections.id, { onDelete: "cascade" }),
+  userEmail: text("user_email").notNull(),
+  provider: text("provider").notNull(),
+  sourceList: text("source_list").notNull().default("shared_link"),
+  externalId: text("external_id").notNull(),
+  productName: text("product_name").notNull(),
+  productUrl: text("product_url").notNull(),
+  status: text("status").notNull().default("active"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("buyer_marketplace_items_connection_external_uidx").on(table.connectionId, table.externalId, table.sourceList),
+  index("buyer_marketplace_items_user_provider_idx").on(table.userEmail, table.provider, table.status),
+]);
+
+export const deliveryConnections = sqliteTable("delivery_connections", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sellerId: integer("seller_id").notNull().references(() => sellers.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull().default("apiship"),
+  accountLabel: text("account_label").notNull(),
+  secretCiphertext: text("secret_ciphertext"),
+  secretIv: text("secret_iv"),
+  status: text("status").notNull().default("encrypted"),
+  lastCheckedAt: text("last_checked_at"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("delivery_connections_seller_idx").on(table.sellerId, table.provider),
+  uniqueIndex("delivery_connections_seller_provider_uidx").on(table.sellerId, table.provider),
+]);
+
+export const sellerDeliveryProfiles = sqliteTable("seller_delivery_profiles", {
+  sellerId: integer("seller_id").primaryKey().references(() => sellers.id, { onDelete: "cascade" }),
+  contactName: text("contact_name").notNull(),
+  phone: text("phone").notNull(),
+  countryCode: text("country_code").notNull().default("RU"),
+  postalCode: text("postal_code"),
+  region: text("region"),
+  city: text("city").notNull(),
+  addressLine: text("address_line").notNull(),
+  comment: text("comment"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const inventoryItems = sqliteTable("inventory_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   sellerId: integer("seller_id").notNull().references(() => sellers.id, { onDelete: "cascade" }),
@@ -196,6 +274,10 @@ export const inventoryItems = sqliteTable("inventory_items", {
   barcode: text("barcode"),
   price: real("price").notNull(),
   stock: integer("stock").notNull().default(0),
+  weightGrams: integer("weight_grams"),
+  lengthCm: integer("length_cm"),
+  widthCm: integer("width_cm"),
+  heightCm: integer("height_cm"),
   status: text("status").notNull().default("active"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -299,12 +381,71 @@ export const deliveries = sqliteTable("deliveries", {
   orderId: integer("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
   provider: text("provider").notNull(),
   externalId: text("external_id"),
+  quotePublicId: text("quote_public_id"),
+  addressId: integer("address_id").references(() => deliveryAddresses.id, { onDelete: "set null" }),
+  method: text("method").notNull().default("courier"),
+  serviceName: text("service_name"),
+  tariffId: text("tariff_id"),
+  amount: real("amount").notNull().default(0),
+  daysMin: integer("days_min"),
+  daysMax: integer("days_max"),
+  pickupPointId: text("pickup_point_id"),
+  pickupPointJson: text("pickup_point_json"),
+  recipientJson: text("recipient_json"),
+  trackingNumber: text("tracking_number"),
   status: text("status").notNull().default("created"),
   eta: text("eta"),
   trackingUrl: text("tracking_url"),
+  isDemo: integer("is_demo", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-}, (table) => [index("deliveries_order_idx").on(table.orderId, table.status)]);
+}, (table) => [
+  index("deliveries_order_idx").on(table.orderId, table.status),
+  index("deliveries_external_idx").on(table.provider, table.externalId),
+]);
+
+export const deliveryAddresses = sqliteTable("delivery_addresses", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userEmail: text("user_email").notNull(),
+  label: text("label").notNull().default("Основной адрес"),
+  recipientName: text("recipient_name").notNull(),
+  phone: text("phone").notNull(),
+  countryCode: text("country_code").notNull().default("RU"),
+  postalCode: text("postal_code"),
+  region: text("region"),
+  city: text("city").notNull(),
+  addressLine: text("address_line").notNull(),
+  apartment: text("apartment"),
+  entrance: text("entrance"),
+  floor: text("floor"),
+  comment: text("comment"),
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [index("delivery_addresses_user_idx").on(table.userEmail, table.isDefault)]);
+
+export const deliveryQuotes = sqliteTable("delivery_quotes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  publicId: text("public_id").notNull().unique(),
+  orderId: integer("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  buyerEmail: text("buyer_email").notNull(),
+  provider: text("provider").notNull(),
+  providerLabel: text("provider_label").notNull(),
+  serviceName: text("service_name").notNull(),
+  method: text("method").notNull(),
+  tariffId: text("tariff_id").notNull(),
+  amount: real("amount").notNull(),
+  daysMin: integer("days_min").notNull(),
+  daysMax: integer("days_max").notNull(),
+  pickupPointIdsJson: text("pickup_point_ids_json").notNull().default("[]"),
+  isDemo: integer("is_demo", { mode: "boolean" }).notNull().default(false),
+  status: text("status").notNull().default("active"),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("delivery_quotes_order_idx").on(table.orderId, table.status),
+  index("delivery_quotes_buyer_idx").on(table.buyerEmail, table.expiresAt),
+]);
 
 export const subscriptions = sqliteTable("subscriptions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
