@@ -15,7 +15,12 @@ export async function POST(request: Request) {
     const result = await registerStandaloneUser(request, body);
     if (!result.ok) return Response.json({ error: result.error }, { status: result.status });
     return Response.json({ user: result.user, verificationQueued: result.verificationQueued }, { status: result.status, headers: { "set-cookie": result.cookie, "cache-control": "no-store" } });
-  } catch {
-    return Response.json({ error: "Регистрация временно недоступна. Повторите немного позже." }, { status: 503 });
+  } catch (error) {
+    console.error("auth.register.failed", error instanceof Error ? { name: error.name, message: error.message } : { name: "UnknownError" });
+    return Response.json({
+      error: "Регистрация временно недоступна. Повторите немного позже.",
+      code: "registration_temporarily_unavailable",
+      retryable: true,
+    }, { status: 503 });
   }
 }

@@ -56,7 +56,6 @@ export function validatePassword(value: unknown) {
 }
 
 export async function registerStandaloneUser(request: Request, input: { email: unknown; displayName: unknown; password: unknown }) {
-  const database = await standaloneDatabase();
   const email = normalizeAuthEmail(input.email);
   const displayName = normalizeDisplayName(input.displayName);
   const password = validatePassword(input.password);
@@ -64,6 +63,7 @@ export async function registerStandaloneUser(request: Request, input: { email: u
   if (!displayName) return { ok: false as const, status: 400, error: "Укажите имя — минимум 2 символа" };
   if (!password.ok) return { ok: false as const, status: 400, error: password.error };
 
+  const database = await standaloneDatabase();
   const existing = await database.prepare("SELECT email FROM auth_credentials WHERE email = ?").bind(email).first<{ email: string }>();
   if (existing) return { ok: false as const, status: 409, error: "Аккаунт с таким email уже существует. Используйте вход." };
 

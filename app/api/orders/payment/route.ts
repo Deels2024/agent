@@ -23,6 +23,7 @@ export async function POST(request: Request) {
     const [order] = await getDb().select().from(orders).where(and(eq(orders.id, orderId), eq(orders.buyerEmail, identity.email))).limit(1);
     if (!order) return Response.json({ error: "Заказ не найден" }, { status: 404 });
     if (order.isDemo) return Response.json({ error: "Демонстрационный заказ нельзя оплатить", code: "demo_order" }, { status: 409 });
+    if (order.deliveryStatus !== "selected") return Response.json({ error: "Сначала выберите способ доставки и проверьте итоговую сумму", code: "delivery_required" }, { status: 409 });
     if (!order.sellerId || !["created", "awaiting_payment"].includes(order.status)) return Response.json({ error: "Заказ пока нельзя оплатить", code: "order_not_payable" }, { status: 409 });
     if (order.saleContractParty !== "seller") return Response.json({ error: "Платёж заблокирован: продавец товара не определён", code: "seller_of_record_required" }, { status: 409 });
     const [existing] = await getDb().select().from(paymentIntents).where(eq(paymentIntents.idempotencyKey, idempotencyKey)).limit(1);

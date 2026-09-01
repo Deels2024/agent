@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { authSignOutPath, requireAuthenticatedUser } from "../chatgpt-auth";
+import { authSignInPath, authSignOutPath, getAuthenticatedUser } from "../chatgpt-auth";
+import { authMode } from "../../lib/standalone-auth";
 import { hasCurrentLegalAcceptances } from "../../lib/legal";
 import RegistrationForm from "./registration-form";
 
@@ -16,7 +17,12 @@ export default async function RegistrationPage({ searchParams }: { searchParams:
 }
 
 async function RegistrationSession({ returnTo, initialRole }: { returnTo: string; initialRole: "buyer" | "seller" }) {
-  const user = await requireAuthenticatedUser(`/register?role=${initialRole}&return_to=${encodeURIComponent(returnTo)}`);
+  const registrationReturn = `/register?role=${initialRole}&return_to=${encodeURIComponent(returnTo)}`;
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    const signIn = authSignInPath(registrationReturn);
+    redirect(authMode() === "standalone" ? `${signIn}&mode=register` : signIn);
+  }
   let legalComplete = false;
   try {
     legalComplete = await hasCurrentLegalAcceptances(user.email, "buyer");
