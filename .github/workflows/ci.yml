@@ -19,6 +19,12 @@ jobs:
         with:
           node-version: 22.13.1
           cache: npm
+      - name: Validate production deployment workflow
+        run: |
+          grep -Fq 'DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}' .github/workflows/deploy.yml
+          grep -Fq 'ServerAliveInterval=30' .github/workflows/deploy.yml
+          grep -Fq 'docker compose -f docker-compose.server.yml up -d --build --wait' .github/workflows/deploy.yml
+          grep -Fq 'http://127.0.0.1:8788/api/health' .github/workflows/deploy.yml
       - run: npm ci
       - run: npm run lint
       - run: npm test
