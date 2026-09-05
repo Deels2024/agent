@@ -35,6 +35,7 @@ jobs:
           # The forced command updates /root/agent, runs Docker Compose and prints the
           # final health payload. Do not pass a remote shell command here: it is ignored.
           for attempt in 1 2; do
+            log_file="$(mktemp)"
             if ssh -T \
               -o BatchMode=yes \
               -o IdentitiesOnly=yes \
@@ -42,9 +43,28 @@ jobs:
               -o ConnectionAttempts=3 \
               -o ServerAliveInterval=30 \
               -o ServerAliveCountMax=20 \
-              root@5.183.191.139; then
+              root@5.183.191.139 2>&1 | tee "$log_file"; then
+              health_line="$(grep '"'"'service'"'"[[:space:]]*:[[:space:]]*"'"'buyer-agent-backend'"'"'" "$log_file" | tail -n 1 || true)"
+              if [[ -z "$health_line" ]]; then
+                echo "Deployment completed but final backend health payload was not found" >&2
+                exit 1
+              fi
+              printf 'Verified health: %s\n' "$health_line"
+              if ! printf '%s' "$health_line" | grep -Eq '"photoRecognition"[[:space:]]*:[[:space:]]*true'; then
+                echo "OpenAI photo recognition is not production-ready; see aiDiagnostic above" >&2
+                exit 1
+              fi
+              if ! printf '%s' "$health_line" | grep -Eq '"backgroundAutomation"[[:space:]]*:[[:space:]]*true'; then
+                echo "Background automation is not production-ready" >&2
+                exit 1
+              fi
+              if ! printf '%s' "$health_line" | grep -Eq '"database"[[:space:]]*:[[:space:]]*"ready"'; then
+                echo "Production database is not ready" >&2
+                exit 1
+              fi
               exit 0
             fi
+            rm -f "$log_file"
             if [ "$attempt" -eq 2 ]; then
               echo "Deployment failed after $attempt attempts" >&2
               exit 1
