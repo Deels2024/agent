@@ -1,0 +1,13 @@
+FROM python:3.13-slim
+
+WORKDIR /runtime-init
+COPY runtime-init/init_runtime.py /runtime-init/init_runtime.py
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    RUNTIME_SECRET_DIR=/run/runtime
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=2s --retries=3 \
+  CMD python -c "import pathlib; p=pathlib.Path('/run/runtime'); raise SystemExit(0 if all((p/n).is_file() and (p/n).stat().st_size>0 for n in ('ready','openai_gateway_token','cron_secret')) else 1)"
+
+CMD ["python", "/runtime-init/init_runtime.py"]

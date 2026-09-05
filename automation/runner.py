@@ -1,18 +1,36 @@
 #!/usr/bin/env python3
 import json
 import os
+import pathlib
 import time
 import urllib.error
 import urllib.request
 
 BASE_URL = (os.environ.get("APP_INTERNAL_URL") or "http://app:8788").rstrip("/")
-CRON_SECRET = (os.environ.get("CRON_SECRET") or "").strip()
+
+
+def cron_secret() -> str:
+    direct = (os.environ.get("CRON_SECRET") or "").strip()
+    if direct:
+        return direct
+    path = pathlib.Path(os.environ.get("CRON_SECRET_FILE") or "/run/runtime/cron_secret")
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def write_heartbeat() -> None:
+    pathlib.Path("/tmp/automation.heartbeat").touch()
 
 
 def request_json(path: str, method: str = "GET", timeout: int = 45):
     headers = {"Accept": "application/json"}
     if method != "GET":
-        headers["Authorization"] = f"Bearer {CRON_SECRET}"
+        secret = cron_secret()
+        if not secret:
+            raise RuntimeError("CRON_SECRET is unavailable")
+        headers["Authorization"] = f"Bearer {secret}"
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(
         BASE_URL + path,
@@ -20,7 +38,8 @@ def request_json(path: str, method: str = "GET", timeout: int = 45):
         headers=headers,
         method=method,
     )
-    with urllib.request.urlopen(req, timeout=timeout) as response:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(req, timeout=timeout) as response:
         raw = response.read(256_000)
         return response.status, json.loads(raw or b"{}")
 
@@ -45,31 +64,29 @@ def health():
 
 
 def main():
-    if not CRON_SECRET:
+    if not cron_secret():
         raise SystemExit("CRON_SECRET is required")
 
+    write_heartbeat()
     next_price = 0.0
     next_delivery = 0.0
     next_notifications = 0.0
     while True:
         now = time.monotonic()
         state = health()
-        if not state:
-            time.sleep(10)
-            continue
-
-        capabilities = state.get("capabilities") or {}
-        if now >= next_price:
-            safe_call("/api/jobs/price-alerts")
-            next_price = now + 300
-        if capabilities.get("deliveryNetwork") and now >= next_delivery:
-            safe_call("/api/jobs/deliveries")
-            next_delivery = now + 600
-        if capabilities.get("notifications") and now >= next_notifications:
-            safe_call("/api/jobs/notifications")
-            next_notifications = now + 60
-
-        time.sleep(15)
+        if state:
+            capabilities = state.get("capabilities") or {}
+            if now >= next_price:
+                safe_call("/api/jobs/price-alerts")
+                next_price = now + 300
+            if capabilities.get("deliveryNetwork") and now >= next_delivery:
+                safe_call("/api/jobs/deliveries")
+                next_delivery = now + 600
+            if capabilities.get("notifications") and now >= next_notifications:
+                safe_call("/api/jobs/notifications")
+                next_notifications = now + 60
+        write_heartbeat()
+        time.sleep(15 if state else 10)
 
 
 if __name__ == "__main__":
