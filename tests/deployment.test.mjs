@@ -71,7 +71,8 @@ test("root-only runtime initializer extracts narrow OpenAI values and generates 
   assert.match(runtimeInit, /write_value\("openai_api_key", api_key\)/);
   assert.match(runtimeInit, /write_value\("openai_proxy_url", proxy\)/);
   assert.match(runtimeInit, /write_value\("openai_model", model\)/);
-  assert.match(runtimeInit, /signal\.pause\(\)/);
+  assert.match(runtimeInit, /REFRESH_SECONDS/);
+  assert.match(runtimeInit, /Runtime integration refresh skipped/);
 });
 
 test("unprivileged OpenAI gateway sees only extracted runtime files and must preflight the proxy", () => {
