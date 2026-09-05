@@ -65,8 +65,8 @@ test("root runtime initializer reuses Buro OpenAI secret and extracts only priva
   assert.match(runtimeInitDockerfile, /openai_config_status\.json/);
   assert.match(runtimeInit, /BURO_OPENAI_KEY_FILE/);
   assert.match(runtimeInit, /bureau-nakhodok_openai_secret\/openai_api_key/);
-  assert.match(runtimeInit, /PROXY_ADDRESS/);
-  assert.match(runtimeInit, /PROXY_LOGIN/);
+  assert.match(runtimeInit, /\{prefix\}_ADDRESS/);
+  assert.match(runtimeInit, /\{prefix\}_LOGIN/);
   assert.match(runtimeInit, /openai_gateway_token/);
   assert.match(runtimeInit, /cron_secret/);
   assert.match(runtimeInit, /candidateProxyKeys/);
