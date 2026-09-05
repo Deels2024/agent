@@ -1,4 +1,5 @@
 import { ensureMarketplaceSchema } from "../../../db/ensure";
+import { openAIConfigured, openAITransport } from "../../../lib/openai";
 import { hasRuntimeValue, runtimeEnv } from "../../../lib/runtime";
 import { authMode } from "../../../lib/standalone-auth";
 
@@ -7,17 +8,18 @@ export async function GET() {
   return Response.json({
     ok: true,
     service: "buyer-agent-backend",
-    version: "0.7.0",
+    version: "0.8.0",
     timestamp: new Date().toISOString(),
     runtime: {
       database: databaseReady ? "ready" : "unavailable",
       authentication: authMode(),
+      aiTransport: openAITransport(),
       databaseRequiredFor: ["registration", "account", "seller", "orders", "admin"],
     },
     capabilities: {
       textSearch: true,
       barcodeSearch: true,
-      photoRecognition: hasRuntimeValue("OPENAI_API_KEY"),
+      photoRecognition: openAIConfigured(),
       priceHistory: true,
       persistentSearches: databaseReady,
       accounts: databaseReady,
