@@ -57,41 +57,53 @@ test("runtime Worker config receives protected environment without changing path
   }
 });
 
-test("production secrets are generated once in a private Docker volume", () => {
-  assert.match(compose, /runtime-init:/);
-  assert.match(compose, /runtime_secrets:\/run\/runtime/);
-  assert.match(compose, /runtime_secrets:\/run\/runtime:ro/);
-  assert.match(runtimeInitDockerfile, /HEALTHCHECK/);
+test("root-only runtime initializer extracts narrow OpenAI values and generates internal secrets", () => {
+  const initSection = compose.match(/\n  runtime-init:[\s\S]*?\n  openai-gateway:/)?.[0] ?? "";
+  assert.match(initSection, /\/opt\/bureau_nakhodok_suite\/\.env:\/run\/integration\/bureau\.env:ro/);
+  assert.match(initSection, /runtime_secrets:\/run\/runtime/);
+  assert.match(initSection, /restart: "on-failure:3"/);
+  assert.match(runtimeInitDockerfile, /openai_api_key/);
+  assert.match(runtimeInitDockerfile, /openai_proxy_url/);
+  assert.match(runtimeInit, /OPENAI_API_KEY/);
+  assert.match(runtimeInit, /proxy_url\(values\)/);
   assert.match(runtimeInit, /openai_gateway_token/);
   assert.match(runtimeInit, /cron_secret/);
-  assert.match(runtimeInit, /if path\.exists\(\) and path\.stat\(\)\.st_size > 0/);
+  assert.match(runtimeInit, /write_value\("openai_api_key", api_key\)/);
+  assert.match(runtimeInit, /write_value\("openai_proxy_url", proxy\)/);
+  assert.match(runtimeInit, /write_value\("openai_model", model\)/);
   assert.match(runtimeInit, /signal\.pause\(\)/);
-  assert.match(startScript, /OPENAI_GATEWAY_TOKEN_FILE/);
-  assert.match(startScript, /CRON_SECRET_FILE/);
-  assert.match(startScript, /export OPENAI_GATEWAY_TOKEN=/);
-  assert.match(startScript, /export CRON_SECRET=/);
 });
 
-test("OpenAI gateway alone can read the server integration file and must preflight through the proxy", () => {
+test("unprivileged OpenAI gateway sees only extracted runtime files and must preflight the proxy", () => {
   const gatewaySection = compose.match(/\n  openai-gateway:[\s\S]*?\n  app:/)?.[0] ?? "";
   const appSection = compose.match(/\n  app:[\s\S]*?\n  automation:/)?.[0] ?? "";
-  assert.match(gatewaySection, /\/opt\/bureau_nakhodok_suite\/\.env:\/run\/integration\/bureau\.env:ro/);
+  assert.doesNotMatch(gatewaySection, /\/opt\/bureau_nakhodok_suite/);
+  assert.match(gatewaySection, /OPENAI_API_KEY_FILE: \/run\/runtime\/openai_api_key/);
+  assert.match(gatewaySection, /OPENAI_PROXY_URL_FILE: \/run\/runtime\/openai_proxy_url/);
   assert.match(gatewaySection, /OPENAI_GATEWAY_TOKEN_FILE: \/run\/runtime\/openai_gateway_token/);
+  assert.match(gatewaySection, /OPENAI_VISION_MODEL_FILE: \/run\/runtime\/openai_model/);
   assert.match(gatewaySection, /GATEWAY_REQUIRE_UPSTREAM: "true"/);
+  assert.match(gatewaySection, /restart: "on-failure:3"/);
   assert.doesNotMatch(gatewaySection, /ports:/);
   assert.doesNotMatch(appSection, /OPENAI_API_KEY:/);
   assert.doesNotMatch(appSection, /OPENAI_PROXY_URL:/);
-  assert.doesNotMatch(appSection, /OPENAI_GATEWAY_TOKEN: \$\{/);
   assert.match(appSection, /OPENAI_BASE_URL: http:\/\/openai-gateway:8080/);
   assert.match(openaiDockerfile, /USER gateway/);
-  assert.match(openaiGateway, /INTEGRATION_ENV_FILE/);
-  assert.match(openaiGateway, /OPENAI_API_KEY/);
-  assert.match(openaiGateway, /BN_OPENAI_API_KEY/);
-  assert.match(openaiGateway, /build_split_proxy/);
+  assert.match(openaiGateway, /OPENAI_API_KEY_FILE/);
+  assert.match(openaiGateway, /OPENAI_PROXY_URL_FILE/);
   assert.match(openaiGateway, /--proxy/);
   assert.match(openaiGateway, /POST", "\/v1\/responses"/);
   assert.match(openaiGateway, /if require_upstream and check_upstream\(\) != 0/);
   assert.match(openaiGateway, /request_payload\["model"\] = model\(\)/);
+});
+
+test("application startup injects private gateway and cron tokens into workerd only at runtime", () => {
+  assert.match(startScript, /OPENAI_GATEWAY_TOKEN_FILE/);
+  assert.match(startScript, /CRON_SECRET_FILE/);
+  assert.match(startScript, /export OPENAI_GATEWAY_TOKEN=/);
+  assert.match(startScript, /export CRON_SECRET=/);
+  assert.match(startScript, /Runtime secrets are empty/);
+  assert.match(compose, /runtime_secrets:\/run\/runtime:ro/);
 });
 
 test("production app is reachable only through the host reverse proxy", () => {
@@ -117,7 +129,6 @@ test("forced-command GitHub deploy intentionally sends no ignored remote shell s
   assert.match(deployWorkflow, /ServerAliveInterval=30/);
   assert.match(deployWorkflow, /ssh -T/);
   assert.doesNotMatch(deployWorkflow, /bash -s/);
-  assert.doesNotMatch(deployWorkflow, /\.deploy\.runtime\.env/);
   assert.doesNotMatch(deployWorkflow, /docker compose/);
 });
 
