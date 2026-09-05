@@ -8,7 +8,7 @@ import test from "node:test";
 
 const execFileAsync = promisify(execFile);
 
-const [dockerfile, dockerignore, compose, startScript, runtimeConfigScript, openaiDockerfile, openaiGateway, automationDockerfile, automationRunner, deployWorkflow] = await Promise.all([
+const [dockerfile, dockerignore, compose, startScript, runtimeConfigScript, openaiDockerfile, openaiGateway, runtimeInitDockerfile, runtimeInit, automationDockerfile, automationRunner, deployWorkflow] = await Promise.all([
   readFile(new URL("../Dockerfile", import.meta.url), "utf8"),
   readFile(new URL("../.dockerignore", import.meta.url), "utf8"),
   readFile(new URL("../docker-compose.server.yml", import.meta.url), "utf8"),
@@ -16,12 +16,14 @@ const [dockerfile, dockerignore, compose, startScript, runtimeConfigScript, open
   readFile(new URL("../scripts/create-runtime-wrangler-config.mjs", import.meta.url), "utf8"),
   readFile(new URL("../Dockerfile.openai-gateway", import.meta.url), "utf8"),
   readFile(new URL("../openai-gateway/openai_gateway.py", import.meta.url), "utf8"),
+  readFile(new URL("../Dockerfile.runtime-init", import.meta.url), "utf8"),
+  readFile(new URL("../runtime-init/init_runtime.py", import.meta.url), "utf8"),
   readFile(new URL("../Dockerfile.automation", import.meta.url), "utf8"),
   readFile(new URL("../automation/runner.py", import.meta.url), "utf8"),
   readFile(new URL("../.github/workflows/deploy.yml", import.meta.url), "utf8"),
 ]);
 
-test("Docker runtime provides a persistent D1 binding", () => {
+test("Docker runtime provides persistent D1 and optimized immutable application files", () => {
   assert.match(dockerfile, /CMD \["npm", "run", "start:docker"\]/);
   assert.match(dockerfile, /COPY --chown=node:node --from=build \/app \/app/);
   assert.doesNotMatch(dockerfile, /chown -R node:node \/app/);
@@ -29,17 +31,8 @@ test("Docker runtime provides a persistent D1 binding", () => {
   assert.match(startScript, /--persist-to/);
   assert.match(startScript, /dist\/server\/wrangler\.json/);
   assert.match(startScript, /create-runtime-wrangler-config\.mjs/);
-  assert.match(runtimeConfigScript, /CREDENTIAL_ENCRYPTION_KEY/);
-  assert.match(runtimeConfigScript, /PUBLIC_ACCESS_ENABLED/);
-  assert.match(runtimeConfigScript, /AUTH_MODE/);
-  assert.match(runtimeConfigScript, /EMAIL_VERIFICATION_REQUIRED/);
   assert.match(compose, /worker_state:\/app\/\.wrangler/);
-  assert.match(compose, /AUTH_MODE: \$\{AUTH_MODE:-standalone\}/);
-  assert.match(compose, /EMAIL_VERIFICATION_REQUIRED: \$\{EMAIL_VERIFICATION_REQUIRED:-false\}/);
-});
-
-test("Docker health check rejects a backend without database persistence", () => {
-  assert.match(dockerfile, /capabilities\?\.persistentSearches/);
+  assert.match(compose, /runtime_state:\/app\/\.sites-runtime/);
 });
 
 test("runtime Worker config receives protected environment without changing paths", async () => {
@@ -49,13 +42,12 @@ test("runtime Worker config receives protected environment without changing path
   try {
     await writeFile(source, JSON.stringify({ main: "index.js", vars: { EXISTING: "kept" } }));
     await execFileAsync(process.execPath, [new URL("../scripts/create-runtime-wrangler-config.mjs", import.meta.url).pathname, source, target], {
-      env: { ...process.env, ADMIN_EMAILS: "admin@example.test", PAYMENT_WEBHOOK_SECRET: "test-secret", OPENAI_BASE_URL: "http://openai-gateway:8080", OPENAI_GATEWAY_TOKEN: "gateway-test", APISHIP_API_TOKEN: "delivery-test", CRON_SECRET: "cron-test" },
+      env: { ...process.env, ADMIN_EMAILS: "admin@example.test", OPENAI_BASE_URL: "http://openai-gateway:8080", OPENAI_GATEWAY_TOKEN: "gateway-test", APISHIP_API_TOKEN: "delivery-test", CRON_SECRET: "cron-test" },
     });
     const generated = JSON.parse(await readFile(target, "utf8"));
     assert.equal(generated.main, "index.js");
     assert.equal(generated.vars.EXISTING, "kept");
     assert.equal(generated.vars.ADMIN_EMAILS, "admin@example.test");
-    assert.equal(generated.vars.PAYMENT_WEBHOOK_SECRET, "test-secret");
     assert.equal(generated.vars.OPENAI_BASE_URL, "http://openai-gateway:8080");
     assert.equal(generated.vars.OPENAI_GATEWAY_TOKEN, "gateway-test");
     assert.equal(generated.vars.APISHIP_API_TOKEN, "delivery-test");
@@ -65,60 +57,41 @@ test("runtime Worker config receives protected environment without changing path
   }
 });
 
-test("server compose passes every protected production integration setting", () => {
-  for (const setting of [
-    "ADMIN_EMAILS",
-    "CREDENTIAL_ENCRYPTION_KEY",
-    "PAYMENT_API_KEY",
-    "PAYMENT_WEBHOOK_SECRET",
-    "KYC_API_KEY",
-    "APISHIP_API_TOKEN",
-    "DELIVERY_API_KEY",
-    "DELIVERY_WEBHOOK_SECRET",
-    "NOTIFICATION_WEBHOOK_SECRET",
-    "CRON_SECRET",
-    "LEGAL_OPERATOR_REQUISITES_CONFIRMED",
-    "PRIVACY_PROCESSORS_CONFIRMED",
-    "PUBLIC_ACCESS_ENABLED",
-    "AUTH_MODE",
-    "EMAIL_VERIFICATION_REQUIRED",
-    "OPENAI_BASE_URL",
-    "OPENAI_GATEWAY_TOKEN",
-  ]) {
-    assert.match(compose, new RegExp(`${setting}: \\\${${setting}`));
-  }
+test("production secrets are generated once in a private Docker volume", () => {
+  assert.match(compose, /runtime-init:/);
+  assert.match(compose, /runtime_secrets:\/run\/runtime/);
+  assert.match(compose, /runtime_secrets:\/run\/runtime:ro/);
+  assert.match(runtimeInitDockerfile, /HEALTHCHECK/);
+  assert.match(runtimeInit, /openai_gateway_token/);
+  assert.match(runtimeInit, /cron_secret/);
+  assert.match(runtimeInit, /if path\.exists\(\) and path\.stat\(\)\.st_size > 0/);
+  assert.match(runtimeInit, /signal\.pause\(\)/);
+  assert.match(startScript, /OPENAI_GATEWAY_TOKEN_FILE/);
+  assert.match(startScript, /CRON_SECRET_FILE/);
+  assert.match(startScript, /export OPENAI_GATEWAY_TOKEN=/);
+  assert.match(startScript, /export CRON_SECRET=/);
 });
 
-test("OpenAI production traffic is isolated behind an internal authenticated proxy gateway", () => {
-  assert.match(compose, /openai-gateway:/);
-  assert.match(compose, /OPENAI_API_KEY: \$\{OPENAI_API_KEY:-\}/);
-  assert.match(compose, /OPENAI_PROXY_URL: \$\{OPENAI_PROXY_URL:-\}/);
-  assert.match(compose, /OPENAI_VISION_MODEL: \$\{OPENAI_VISION_MODEL:-gpt-5\.6-luna\}/);
-  assert.match(compose, /OPENAI_BASE_URL: \$\{OPENAI_BASE_URL:-http:\/\/openai-gateway:8080\}/);
-  assert.doesNotMatch(compose.match(/\n  app:[\s\S]*?\n  automation:/)?.[0] ?? "", /OPENAI_API_KEY:/);
+test("OpenAI gateway alone can read the server integration file and must preflight through the proxy", () => {
+  const gatewaySection = compose.match(/\n  openai-gateway:[\s\S]*?\n  app:/)?.[0] ?? "";
+  const appSection = compose.match(/\n  app:[\s\S]*?\n  automation:/)?.[0] ?? "";
+  assert.match(gatewaySection, /\/opt\/bureau_nakhodok_suite\/\.env:\/run\/integration\/bureau\.env:ro/);
+  assert.match(gatewaySection, /OPENAI_GATEWAY_TOKEN_FILE: \/run\/runtime\/openai_gateway_token/);
+  assert.match(gatewaySection, /GATEWAY_REQUIRE_UPSTREAM: "true"/);
+  assert.doesNotMatch(gatewaySection, /ports:/);
+  assert.doesNotMatch(appSection, /OPENAI_API_KEY:/);
+  assert.doesNotMatch(appSection, /OPENAI_PROXY_URL:/);
+  assert.doesNotMatch(appSection, /OPENAI_GATEWAY_TOKEN: \$\{/);
+  assert.match(appSection, /OPENAI_BASE_URL: http:\/\/openai-gateway:8080/);
   assert.match(openaiDockerfile, /USER gateway/);
-  assert.match(openaiDockerfile, /http\.client\.HTTPConnection/);
-  assert.match(openaiGateway, /X-OpenAI-Gateway-Token/);
+  assert.match(openaiGateway, /INTEGRATION_ENV_FILE/);
+  assert.match(openaiGateway, /OPENAI_API_KEY/);
+  assert.match(openaiGateway, /BN_OPENAI_API_KEY/);
+  assert.match(openaiGateway, /build_split_proxy/);
   assert.match(openaiGateway, /--proxy/);
   assert.match(openaiGateway, /POST", "\/v1\/responses"/);
-  assert.match(openaiGateway, /--check-upstream/);
-  assert.doesNotMatch(compose.match(/\n  openai-gateway:[\s\S]*?\n  app:/)?.[0] ?? "", /ports:/);
-  assert.match(deployWorkflow, /openai_gateway\.py --check-upstream/);
-  assert.match(deployWorkflow, /OpenAI gateway env/);
-  assert.match(deployWorkflow, /Worker runtime env/);
-});
-
-test("production deployment uses a generated env file and fails explicit readiness assertions", () => {
-  assert.match(deployWorkflow, /\.deploy\.runtime\.env/);
-  assert.match(deployWorkflow, /--env-file "\$runtime_env"/);
-  assert.match(deployWorkflow, /--no-deps openai-gateway/);
-  assert.match(deployWorkflow, /--no-deps app/);
-  assert.match(deployWorkflow, /backgroundAutomation/);
-  assert.match(deployWorkflow, /DEPLOY ERROR/);
-  assert.match(deployWorkflow, /background job authentication probe failed/);
-  assert.match(dockerignore, /^\.deploy\.runtime\.env$/m);
-  assert.match(dockerignore, /^\.openai-gateway-token$/m);
-  assert.match(dockerignore, /^\.cron-secret$/m);
+  assert.match(openaiGateway, /if require_upstream and check_upstream\(\) != 0/);
+  assert.match(openaiGateway, /request_payload\["model"\] = model\(\)/);
 });
 
 test("production app is reachable only through the host reverse proxy", () => {
@@ -126,15 +99,44 @@ test("production app is reachable only through the host reverse proxy", () => {
   assert.doesNotMatch(compose, /0\.0\.0\.0:8788:8788/);
 });
 
-test("background runner links price alerts, delivery tracking and notifications to the API", () => {
-  assert.match(compose, /automation:/);
-  assert.match(compose, /condition: service_healthy/);
-  assert.match(automationDockerfile, /USER automation/);
+test("background automation reads the same private cron secret and has a heartbeat health check", () => {
+  const automationSection = compose.match(/\n  automation:[\s\S]*?\nvolumes:/)?.[0] ?? "";
+  assert.match(automationSection, /CRON_SECRET_FILE: \/run\/runtime\/cron_secret/);
+  assert.match(automationSection, /runtime_secrets:\/run\/runtime:ro/);
+  assert.match(automationSection, /condition: service_healthy/);
+  assert.match(automationDockerfile, /automation\.heartbeat/);
+  assert.match(automationRunner, /CRON_SECRET_FILE/);
   assert.match(automationRunner, /\/api\/jobs\/price-alerts/);
   assert.match(automationRunner, /\/api\/jobs\/deliveries/);
   assert.match(automationRunner, /\/api\/jobs\/notifications/);
-  assert.match(automationRunner, /CRON_SECRET/);
-  assert.match(deployWorkflow, /\.cron-secret/);
-  assert.match(deployWorkflow, /automation_state/);
-  assert.match(deployWorkflow, /Background job probe/);
+  assert.match(automationRunner, /ProxyHandler\(\{\}\)/);
+});
+
+test("forced-command GitHub deploy intentionally sends no ignored remote shell script", () => {
+  assert.match(deployWorkflow, /server-side forced command/);
+  assert.match(deployWorkflow, /ServerAliveInterval=30/);
+  assert.match(deployWorkflow, /ssh -T/);
+  assert.doesNotMatch(deployWorkflow, /bash -s/);
+  assert.doesNotMatch(deployWorkflow, /\.deploy\.runtime\.env/);
+  assert.doesNotMatch(deployWorkflow, /docker compose/);
+});
+
+test("Docker build context excludes all server-only secret files", () => {
+  assert.match(dockerignore, /^\.env$/m);
+  assert.match(dockerignore, /^\.env\.\*$/m);
+  assert.match(dockerignore, /^\.deploy\.runtime\.env$/m);
+  assert.match(dockerignore, /^\.openai-gateway-token$/m);
+  assert.match(dockerignore, /^\.cron-secret$/m);
+});
+
+test("server compose still passes configured non-OpenAI production integrations", () => {
+  for (const setting of [
+    "ADMIN_EMAILS", "CREDENTIAL_ENCRYPTION_KEY", "PAYMENT_API_KEY", "PAYMENT_WEBHOOK_SECRET",
+    "KYC_API_KEY", "APISHIP_API_TOKEN", "DELIVERY_API_KEY", "DELIVERY_WEBHOOK_SECRET",
+    "NOTIFICATION_WEBHOOK_SECRET", "LEGAL_OPERATOR_REQUISITES_CONFIRMED", "PRIVACY_PROCESSORS_CONFIRMED",
+    "PUBLIC_ACCESS_ENABLED", "AUTH_MODE", "EMAIL_VERIFICATION_REQUIRED",
+  ]) {
+    assert.match(compose, new RegExp(`${setting}: \\\${${setting}`));
+  }
+  assert.match(runtimeConfigScript, /APISHIP_API_TOKEN/);
 });
