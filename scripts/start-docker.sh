@@ -5,7 +5,7 @@ port="${PORT:-8788}"
 state_dir="${WRANGLER_STATE_DIR:-/app/.wrangler/state}"
 config="${WRANGLER_CONFIG:-/app/dist/server/wrangler.json}"
 runtime_config="${WRANGLER_RUNTIME_CONFIG:-/app/dist/server/wrangler.runtime.json}"
-runtime_secret_dir="${RUNTIME_SECRET_DIR:-/run/runtime}"
+runtime_secret_dir="${RUNTIME_SECRET_DIR:-/run/shared}"
 gateway_token_file="${OPENAI_GATEWAY_TOKEN_FILE:-$runtime_secret_dir/openai_gateway_token}"
 cron_secret_file="${CRON_SECRET_FILE:-$runtime_secret_dir/cron_secret}"
 
@@ -39,9 +39,6 @@ fi
 mkdir -p "$state_dir" /app/.wrangler/logs
 node /app/scripts/create-runtime-wrangler-config.mjs "$config" "$runtime_config"
 
-# The regular `vinext start` Node adapter does not provide Cloudflare bindings.
-# Running the built Worker in the local workerd runtime supplies a persistent D1
-# database while keeping the same Worker code that is deployed to Sites.
 exec /app/node_modules/.bin/wrangler dev \
   --config "$runtime_config" \
   --local \
