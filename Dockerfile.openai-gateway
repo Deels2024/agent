@@ -12,11 +12,12 @@ RUN useradd --create-home --uid 10001 gateway \
 
 USER gateway
 ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     GATEWAY_HOST=0.0.0.0 \
     GATEWAY_PORT=8080
 
 EXPOSE 8080
 HEALTHCHECK --interval=20s --timeout=5s --start-period=5s --retries=3 \
-  CMD python -c "import json,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3); b=json.load(r); raise SystemExit(0 if r.status==200 and b.get('ok') else 1)"
+  CMD python -c "import http.client,json; c=http.client.HTTPConnection('127.0.0.1',8080,timeout=3); c.request('GET','/health'); r=c.getresponse(); b=json.loads(r.read()); raise SystemExit(0 if r.status==200 and b.get('ok') else 1)"
 
 CMD ["python", "/gateway/openai_gateway.py"]
