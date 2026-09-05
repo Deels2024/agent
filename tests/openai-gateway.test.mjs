@@ -10,6 +10,9 @@ import test from "node:test";
 const execFileAsync = promisify(execFile);
 const initPath = fileURLToPath(new URL("../runtime-init/init_runtime.py", import.meta.url));
 const gatewayPath = fileURLToPath(new URL("../openai-gateway/openai_gateway.py", import.meta.url));
+const clearedProxyEnv = {
+  HTTPS_PROXY: "", https_proxy: "", ALL_PROXY: "", all_proxy: "", HTTP_PROXY: "", http_proxy: "",
+};
 
 async function extractTransport(contents) {
   const directory = await mkdtemp(join(tmpdir(), "agent-openai-transport-"));
@@ -29,6 +32,39 @@ print(json.dumps(m.extract_openai_transport_configuration()))
     env: { ...process.env, RUNTIME_SHARED_DIR: shared, RUNTIME_OPENAI_DIR: openai, INTEGRATION_ENV_FILE: envFile },
   });
   return { directory, shared, openai, status: JSON.parse(stdout.trim()) };
+}
+
+async function makeGatewayFixture() {
+  const directory = await mkdtemp(join(tmpdir(), "agent-openai-gateway-fixture-"));
+  const shared = join(directory, "shared");
+  const openai = join(directory, "openai");
+  const keyFile = join(directory, "openai_api_key");
+  await mkdir(shared, { recursive: true });
+  await mkdir(openai, { recursive: true });
+  await writeFile(join(shared, "openai_gateway_token"), "gateway-token\n");
+  await writeFile(join(shared, "openai_config_status.json"), JSON.stringify({ apiKeySource: "bureau-nakhodok_openai_secret/openai_api_key", proxySource: "missing", modelSource: "BN_OPENAI_MODEL" }));
+  await writeFile(join(openai, "proxy_url"), "");
+  await writeFile(join(openai, "model"), "gpt-5.6\n");
+  await writeFile(keyFile, "sk-test-key\n");
+  return { directory, shared, openai, keyFile };
+}
+
+function gatewayEnv(fixture, extra = {}) {
+  return {
+    ...process.env,
+    ...clearedProxyEnv,
+    RUNTIME_SHARED_DIR: fixture.shared,
+    RUNTIME_OPENAI_DIR: fixture.openai,
+    OPENAI_API_KEY_FILE: fixture.keyFile,
+    OPENAI_GATEWAY_TOKEN_FILE: join(fixture.shared, "openai_gateway_token"),
+    OPENAI_CONFIG_STATUS_FILE: join(fixture.shared, "openai_config_status.json"),
+    OPENAI_PROXY_URL_FILE: join(fixture.openai, "proxy_url"),
+    OPENAI_MODEL_FILE: join(fixture.openai, "model"),
+    OPENAI_API_KEY: "",
+    OPENAI_PROXY_URL: "",
+    OPENAI_GATEWAY_TOKEN: "",
+    ...extra,
+  };
 }
 
 test("root initializer extracts only proxy and model, never the OpenAI API key", async () => {
@@ -83,6 +119,7 @@ print(json.dumps(m.local_status()))
     const { stdout } = await execFileAsync("python3", ["-c", code], {
       env: {
         ...process.env,
+        ...clearedProxyEnv,
         RUNTIME_SHARED_DIR: result.shared,
         RUNTIME_OPENAI_DIR: result.openai,
         OPENAI_API_KEY_FILE: keyFile,
@@ -104,21 +141,11 @@ print(json.dumps(m.local_status()))
   }
 });
 
-test("gateway uses direct-network when proxy settings are empty and disables inherited curl proxies", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agent-openai-direct-"));
+test("gateway reuses Docker-injected HTTPS_PROXY like Buro's default OpenAI client", async () => {
+  const fixture = await makeGatewayFixture();
   try {
-    const shared = join(directory, "shared");
-    const openai = join(directory, "openai");
-    const keyFile = join(directory, "openai_api_key");
-    await mkdir(shared, { recursive: true });
-    await mkdir(openai, { recursive: true });
-    await writeFile(join(shared, "openai_gateway_token"), "gateway-token\n");
-    await writeFile(join(shared, "openai_config_status.json"), JSON.stringify({ apiKeySource: "bureau-nakhodok_openai_secret/openai_api_key", proxySource: "missing", modelSource: "BN_OPENAI_MODEL" }));
-    await writeFile(join(openai, "proxy_url"), "");
-    await writeFile(join(openai, "model"), "gpt-5.6\n");
-    await writeFile(keyFile, "sk-test-key\n");
     const code = `
-import importlib.util, json, subprocess
+import importlib.util, json
 spec=importlib.util.spec_from_file_location("gateway", ${JSON.stringify(gatewayPath)})
 m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 captured={}
@@ -133,21 +160,43 @@ status=m.local_status()
 http_status,_=m.curl_request("POST","/v1/responses",b'{}',5)
 print(json.dumps({"status":status,"httpStatus":http_status,"args":captured["args"]}))
 `;
+    const proxy = "http://runtime-user:runtime-pass@proxy.example.test:3128";
     const { stdout } = await execFileAsync("python3", ["-c", code], {
-      env: {
-        ...process.env,
-        RUNTIME_SHARED_DIR: shared,
-        RUNTIME_OPENAI_DIR: openai,
-        OPENAI_API_KEY_FILE: keyFile,
-        OPENAI_GATEWAY_TOKEN_FILE: join(shared, "openai_gateway_token"),
-        OPENAI_CONFIG_STATUS_FILE: join(shared, "openai_config_status.json"),
-        OPENAI_PROXY_URL_FILE: join(openai, "proxy_url"),
-        OPENAI_MODEL_FILE: join(openai, "model"),
-        OPENAI_API_KEY: "",
-        OPENAI_PROXY_URL: "",
-        OPENAI_GATEWAY_TOKEN: "",
-      },
+      env: gatewayEnv(fixture, { HTTPS_PROXY: proxy }),
     });
+    const result = JSON.parse(stdout.trim());
+    assert.equal(result.status.proxyConfigured, true);
+    assert.equal(result.status.networkTransport, "container-proxy");
+    assert.equal(result.status.proxySource, "container-env:HTTPS_PROXY");
+    const proxyIndex = result.args.indexOf("--proxy");
+    assert.ok(proxyIndex >= 0);
+    assert.equal(result.args[proxyIndex + 1], proxy);
+    assert.equal(JSON.stringify(result.status).includes("runtime-pass"), false);
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("gateway uses direct-network only when neither extracted nor inherited proxy exists", async () => {
+  const fixture = await makeGatewayFixture();
+  try {
+    const code = `
+import importlib.util, json
+spec=importlib.util.spec_from_file_location("gateway", ${JSON.stringify(gatewayPath)})
+m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+captured={}
+class Completed:
+    stdout=b'{"id":"resp_test"}\\n__OPENAI_HTTP_STATUS__:200'
+    stderr=b''
+def fake_run(args, **kwargs):
+    captured["args"]=args
+    return Completed()
+m.subprocess.run=fake_run
+status=m.local_status()
+http_status,_=m.curl_request("POST","/v1/responses",b'{}',5)
+print(json.dumps({"status":status,"httpStatus":http_status,"args":captured["args"]}))
+`;
+    const { stdout } = await execFileAsync("python3", ["-c", code], { env: gatewayEnv(fixture) });
     const result = JSON.parse(stdout.trim());
     assert.equal(result.status.apiKeyConfigured, true);
     assert.equal(result.status.proxyConfigured, false);
@@ -157,6 +206,6 @@ print(json.dumps({"status":status,"httpStatus":http_status,"args":captured["args
     assert.ok(proxyIndex >= 0);
     assert.equal(result.args[proxyIndex + 1], "");
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(fixture.directory, { recursive: true, force: true });
   }
 });
