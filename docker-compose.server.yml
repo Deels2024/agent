@@ -1,4 +1,23 @@
 services:
+  openai-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.openai-gateway
+    restart: unless-stopped
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_PROXY_URL: ${OPENAI_PROXY_URL:-}
+      OPENAI_GATEWAY_TOKEN: ${OPENAI_GATEWAY_TOKEN:-}
+    expose:
+      - "8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+
   app:
     build: .
     restart: unless-stopped
@@ -13,7 +32,8 @@ services:
       WRANGLER_STATE_DIR: /app/.wrangler/state
       AUTH_MODE: ${AUTH_MODE:-standalone}
       EMAIL_VERIFICATION_REQUIRED: ${EMAIL_VERIFICATION_REQUIRED:-false}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://openai-gateway:8080}
+      OPENAI_GATEWAY_TOKEN: ${OPENAI_GATEWAY_TOKEN:-}
       OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-gpt-5.4-nano}
       WB_API_TOKEN: ${WB_API_TOKEN:-}
       WB_CLIENT_SECRET: ${WB_CLIENT_SECRET:-}
@@ -32,6 +52,7 @@ services:
       KYC_PROVIDER: ${KYC_PROVIDER:-}
       KYC_API_KEY: ${KYC_API_KEY:-}
       DELIVERY_PROVIDER: ${DELIVERY_PROVIDER:-}
+      APISHIP_API_TOKEN: ${APISHIP_API_TOKEN:-}
       DELIVERY_API_KEY: ${DELIVERY_API_KEY:-}
       DELIVERY_WEBHOOK_SECRET: ${DELIVERY_WEBHOOK_SECRET:-}
       NOTIFICATION_WEBHOOK_URL: ${NOTIFICATION_WEBHOOK_URL:-}
