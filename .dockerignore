@@ -13,6 +13,7 @@ work
 .env
 .env.*
 !.env.example
+.deploy.runtime.env
 .openai-gateway-token
 .cron-secret
 *.pem
