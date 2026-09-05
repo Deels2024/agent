@@ -41,6 +41,10 @@ services:
       - runtime_openai:/run/openai:ro
     expose:
       - "8080"
+    networks:
+      buro_openai_network:
+        aliases:
+          - agent-openai-gateway
     depends_on:
       runtime-init:
         condition: service_healthy
@@ -70,7 +74,7 @@ services:
       CRON_SECRET_FILE: /run/shared/cron_secret
       AUTH_MODE: ${AUTH_MODE:-standalone}
       EMAIL_VERIFICATION_REQUIRED: ${EMAIL_VERIFICATION_REQUIRED:-false}
-      OPENAI_BASE_URL: http://openai-gateway:8080
+      OPENAI_BASE_URL: http://agent-openai-gateway:8080
       OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-gpt-5.6-luna}
       WB_API_TOKEN: ${WB_API_TOKEN:-}
       WB_CLIENT_SECRET: ${WB_CLIENT_SECRET:-}
@@ -104,6 +108,9 @@ services:
       - worker_state:/app/.wrangler
       - runtime_state:/app/.sites-runtime
       - runtime_shared:/run/shared:ro
+    networks:
+      - default
+      - buro_openai_network
     depends_on:
       runtime-init:
         condition: service_healthy
@@ -138,6 +145,11 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
+
+networks:
+  buro_openai_network:
+    external: true
+    name: bureau-nakhodok_default
 
 volumes:
   worker_state:
