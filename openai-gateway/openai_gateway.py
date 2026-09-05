@@ -166,7 +166,7 @@ def check_upstream() -> int:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "BuyerAgentOpenAIGateway/1.2"
+    server_version = "BuyerAgentOpenAIGateway/1.3"
 
     def log_message(self, fmt, *args):
         sys.stdout.write("openai-gateway " + (fmt % args) + "\n")
@@ -216,7 +216,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self.rfile.read(length)
         try:
-            json.loads(body)
+            request_payload = json.loads(body)
+            if not isinstance(request_payload, dict):
+                raise ValueError("request must be an object")
+            request_payload["model"] = model()
+            body = json.dumps(request_payload, separators=(",", ":")).encode("utf-8")
         except Exception:
             self._json(400, {"error": "invalid_json"})
             return
