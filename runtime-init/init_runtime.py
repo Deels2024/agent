@@ -9,6 +9,7 @@ from urllib.parse import quote
 SHARED_DIR = pathlib.Path(os.environ.get("RUNTIME_SHARED_DIR") or "/run/shared")
 OPENAI_DIR = pathlib.Path(os.environ.get("RUNTIME_OPENAI_DIR") or "/run/openai")
 INTEGRATION_ENV = pathlib.Path(os.environ.get("INTEGRATION_ENV_FILE") or "/run/integration/bureau.env")
+BURO_OPENAI_KEY_FILE = pathlib.Path(os.environ.get("BURO_OPENAI_KEY_FILE") or "/run/bureau-openai/openai_api_key")
 
 
 def atomic_write(path: pathlib.Path, value: str, mode: int = 0o444) -> None:
@@ -54,33 +55,70 @@ def first(values: dict[str, str], *names: str) -> tuple[str, str]:
     return "", ""
 
 
+def read_secret(path: pathlib.Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def build_split_proxy(values: dict[str, str]) -> tuple[str, str]:
     prefixes = ("OPENAI_PROXY", "BN_OPENAI_PROXY", "PROXY", "OUTBOUND_PROXY")
     for prefix in prefixes:
-        host = (values.get(f"{prefix}_HOST") or values.get(f"{prefix}_IP") or "").strip()
+        host = (
+            values.get(f"{prefix}_HOST")
+            or values.get(f"{prefix}_ADDRESS")
+            or values.get(f"{prefix}_IP")
+            or ""
+        ).strip()
         port = (values.get(f"{prefix}_PORT") or "").strip()
         if not host or not port:
             continue
-        protocol = (values.get(f"{prefix}_SCHEME") or values.get(f"{prefix}_TYPE") or values.get(f"{prefix}_PROTOCOL") or "http").strip().lower()
+        protocol = (
+            values.get(f"{prefix}_SCHEME")
+            or values.get(f"{prefix}_TYPE")
+            or values.get(f"{prefix}_PROTOCOL")
+            or "http"
+        ).strip().lower()
         if protocol in {"socks", "socks5"}:
             protocol = "socks5h"
         if protocol not in {"http", "https", "socks4", "socks4a", "socks5", "socks5h"}:
             protocol = "http"
-        user = (values.get(f"{prefix}_USER") or values.get(f"{prefix}_USERNAME") or values.get("PROXY_USER") or values.get("PROXY_USERNAME") or "").strip()
-        password = (values.get(f"{prefix}_PASSWORD") or values.get(f"{prefix}_PASS") or values.get("PROXY_PASSWORD") or values.get("PROXY_PASS") or "").strip()
+        user = (
+            values.get(f"{prefix}_USER")
+            or values.get(f"{prefix}_USERNAME")
+            or values.get(f"{prefix}_LOGIN")
+            or values.get("PROXY_USER")
+            or values.get("PROXY_USERNAME")
+            or values.get("PROXY_LOGIN")
+            or ""
+        ).strip()
+        password = (
+            values.get(f"{prefix}_PASSWORD")
+            or values.get(f"{prefix}_PASS")
+            or values.get("PROXY_PASSWORD")
+            or values.get("PROXY_PASS")
+            or ""
+        ).strip()
         auth = ""
         if user:
             auth = quote(user, safe="")
             if password:
                 auth += ":" + quote(password, safe="")
             auth += "@"
-        return f"{protocol}://{auth}{host}:{port}", f"{prefix}_HOST+PORT"
+        source_host = "ADDRESS" if values.get(f"{prefix}_ADDRESS") else "HOST" if values.get(f"{prefix}_HOST") else "IP"
+        return f"{protocol}://{auth}{host}:{port}", f"{prefix}_{source_host}+PORT"
     return "", ""
 
 
 def extract_openai_configuration() -> dict[str, object]:
     values = parse_env_file(INTEGRATION_ENV)
     api_key, key_source = first(values, "OPENAI_API_KEY", "BN_OPENAI_API_KEY")
+    if not api_key:
+        api_key = read_secret(BURO_OPENAI_KEY_FILE)
+        if api_key:
+            key_source = "bureau-nakhodok_openai_secret/openai_api_key"
+
     proxy, proxy_source = first(
         values,
         "OPENAI_PROXY_URL", "BN_OPENAI_PROXY_URL", "OPENAI_PROXY", "OPENAI_HTTPS_PROXY",
@@ -105,6 +143,7 @@ def extract_openai_configuration() -> dict[str, object]:
         "modelConfigured": bool(model),
         "modelSource": model_source,
         "candidateProxyKeys": sorted(key for key in values if "PROXY" in key.upper() or "TUNNEL" in key.upper())[:30],
+        "buroSecretFilePresent": BURO_OPENAI_KEY_FILE.is_file(),
     }
     atomic_write(SHARED_DIR / "openai_config_status.json", json.dumps(status, ensure_ascii=False, separators=(",", ":")) + "\n")
     return status
@@ -125,6 +164,7 @@ def main() -> int:
             "proxyConfigured": False,
             "modelConfigured": False,
             "extractorError": type(exc).__name__,
+            "buroSecretFilePresent": BURO_OPENAI_KEY_FILE.is_file(),
         }
         atomic_write(SHARED_DIR / "openai_config_status.json", json.dumps(status, separators=(",", ":")) + "\n")
 

@@ -9,8 +9,10 @@ services:
       RUNTIME_SHARED_DIR: /run/shared
       RUNTIME_OPENAI_DIR: /run/openai
       INTEGRATION_ENV_FILE: /run/integration/bureau.env
+      BURO_OPENAI_KEY_FILE: /run/bureau-openai/openai_api_key
     volumes:
       - /opt/bureau_nakhodok_suite/.env:/run/integration/bureau.env:ro
+      - buro_openai_secret:/run/bureau-openai:ro
       - runtime_shared:/run/shared
       - runtime_openai:/run/openai
     security_opt:
@@ -143,3 +145,6 @@ volumes:
   runtime_state:
   runtime_shared:
   runtime_openai:
+  buro_openai_secret:
+    external: true
+    name: bureau-nakhodok_openai_secret
