@@ -9,6 +9,11 @@ import test from "node:test";
 
 const execFileAsync = promisify(execFile);
 const gatewayPath = fileURLToPath(new URL("../openai-gateway/openai_gateway.py", import.meta.url));
+const clearedProxyEnvironment = {
+  OPENAI_PROXY_URL: "", BN_OPENAI_PROXY_URL: "", OPENAI_PROXY: "", OPENAI_HTTPS_PROXY: "",
+  HTTPS_PROXY: "", https_proxy: "", ALL_PROXY: "", all_proxy: "", HTTP_PROXY: "", http_proxy: "",
+  PROXY_URL: "", PROXY: "", OUTBOUND_PROXY_URL: "", OUTBOUND_PROXY: "",
+};
 
 async function inspectGateway(envFile, tokenFile, extraEnv = {}) {
   const code = `
@@ -21,10 +26,10 @@ print(json.dumps({"key": bool(module.api_key()), "proxy": module.proxy_url(), "t
   const { stdout } = await execFileAsync("python3", ["-c", code], {
     env: {
       ...process.env,
+      ...clearedProxyEnvironment,
       INTEGRATION_ENV_FILE: envFile,
       OPENAI_GATEWAY_TOKEN_FILE: tokenFile,
       OPENAI_API_KEY: "",
-      OPENAI_PROXY_URL: "",
       ...extraEnv,
     },
   });
