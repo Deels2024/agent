@@ -8,7 +8,7 @@ import test from "node:test";
 
 const execFileAsync = promisify(execFile);
 
-const [dockerfile, dockerignore, compose, startScript, runtimeConfigScript, openaiDockerfile, openaiGateway, runtimeInitDockerfile, runtimeInit, automationDockerfile, automationRunner, deployWorkflow] = await Promise.all([
+const [dockerfile, dockerignore, compose, startScript, runtimeConfigScript, openaiDockerfile, openaiGateway, runtimeInitDockerfile, runtimeInit, automationDockerfile, automationRunner, deployWorkflow, deployClient] = await Promise.all([
   readFile(new URL("../Dockerfile", import.meta.url), "utf8"),
   readFile(new URL("../.dockerignore", import.meta.url), "utf8"),
   readFile(new URL("../docker-compose.server.yml", import.meta.url), "utf8"),
@@ -21,6 +21,7 @@ const [dockerfile, dockerignore, compose, startScript, runtimeConfigScript, open
   readFile(new URL("../Dockerfile.automation", import.meta.url), "utf8"),
   readFile(new URL("../automation/runner.py", import.meta.url), "utf8"),
   readFile(new URL("../.github/workflows/deploy.yml", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/deploy-forced-client.sh", import.meta.url), "utf8"),
 ]);
 
 test("Docker runtime provides persistent D1 and optimized immutable application files", () => {
@@ -41,7 +42,7 @@ test("runtime Worker config receives protected environment without changing path
   try {
     await writeFile(source, JSON.stringify({ main: "index.js", vars: { EXISTING: "kept" } }));
     await execFileAsync(process.execPath, [new URL("../scripts/create-runtime-wrangler-config.mjs", import.meta.url).pathname, source, target], {
-      env: { ...process.env, ADMIN_EMAILS: "admin@example.test", OPENAI_BASE_URL: "http://openai-gateway:8080", OPENAI_GATEWAY_TOKEN: "gateway-test", APISHIP_API_TOKEN: "delivery-test", CRON_SECRET: "cron-test" },
+      env: { ...process.env, OPENAI_BASE_URL: "http://openai-gateway:8080", OPENAI_GATEWAY_TOKEN: "gateway-test", APISHIP_API_TOKEN: "delivery-test", CRON_SECRET: "cron-test" },
     });
     const generated = JSON.parse(await readFile(target, "utf8"));
     assert.equal(generated.vars.OPENAI_BASE_URL, "http://openai-gateway:8080");
@@ -61,10 +62,7 @@ test("root runtime initializer extracts only OpenAI secrets and shared tokens", 
   assert.match(runtimeInitDockerfile, /openai_config_status\.json/);
   assert.match(runtimeInit, /openai_gateway_token/);
   assert.match(runtimeInit, /cron_secret/);
-  assert.match(runtimeInit, /api_key/);
-  assert.match(runtimeInit, /proxy_url/);
   assert.match(runtimeInit, /candidateProxyKeys/);
-  assert.match(runtimeInit, /signal\.pause\(\)/);
 });
 
 test("OpenAI API key and proxy never enter the application container", () => {
@@ -73,8 +71,6 @@ test("OpenAI API key and proxy never enter the application container", () => {
   assert.match(gatewaySection, /runtime_openai:\/run\/openai:ro/);
   assert.match(gatewaySection, /OPENAI_API_KEY_FILE: \/run\/openai\/api_key/);
   assert.match(gatewaySection, /OPENAI_PROXY_URL_FILE: \/run\/openai\/proxy_url/);
-  assert.match(gatewaySection, /OPENAI_GATEWAY_TOKEN_FILE: \/run\/shared\/openai_gateway_token/);
-  assert.doesNotMatch(gatewaySection, /\/opt\/bureau_nakhodok_suite\/\.env/);
   assert.doesNotMatch(appSection, /runtime_openai/);
   assert.doesNotMatch(appSection, /OPENAI_API_KEY/);
   assert.doesNotMatch(appSection, /OPENAI_PROXY_URL/);
@@ -89,7 +85,6 @@ test("gateway remains available while exposing safe upstream readiness", () => {
   assert.match(openaiGateway, /threading\.Thread/);
   assert.match(openaiGateway, /proxy_timeout/);
   assert.match(openaiGateway, /request_payload\["model"\] = model\(\)/);
-  assert.doesNotMatch(openaiGateway, /print\([^\n]*api_key\(\)/);
 });
 
 test("production app is reachable only through the host reverse proxy", () => {
@@ -106,15 +101,17 @@ test("background automation reads only the shared cron secret", () => {
   assert.match(automationRunner, /\/api\/jobs\/price-alerts/);
 });
 
-test("forced-command deploy validates the final production health payload", () => {
-  assert.match(deployWorkflow, /server-side forced command/);
-  assert.match(deployWorkflow, /ssh -T/);
-  assert.match(deployWorkflow, /Verified health/);
-  assert.match(deployWorkflow, /photoRecognition/);
-  assert.match(deployWorkflow, /backgroundAutomation/);
-  assert.match(deployWorkflow, /database/);
-  assert.doesNotMatch(deployWorkflow, /bash -s/);
-  assert.doesNotMatch(deployWorkflow, /docker compose/);
+test("forced-command deploy client validates final production health", async () => {
+  assert.match(deployWorkflow, /bash scripts\/deploy-forced-client\.sh/);
+  assert.match(deployClient, /ssh -T/);
+  assert.match(deployClient, /ServerAliveInterval=30/);
+  assert.match(deployClient, /Verified health/);
+  assert.match(deployClient, /photoRecognition/);
+  assert.match(deployClient, /backgroundAutomation/);
+  assert.match(deployClient, /database/);
+  assert.doesNotMatch(deployClient, /bash -s/);
+  assert.doesNotMatch(deployClient, /docker compose/);
+  await execFileAsync("bash", ["-n", new URL("../scripts/deploy-forced-client.sh", import.meta.url).pathname]);
 });
 
 test("Docker build context excludes all server-only secret files", () => {

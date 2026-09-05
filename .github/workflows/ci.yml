@@ -21,14 +21,15 @@ jobs:
           cache: npm
       - name: Validate forced-command deployment workflow
         run: |
-          grep -Fq 'server-side forced command' .github/workflows/deploy.yml
-          grep -Fq 'ServerAliveInterval=30' .github/workflows/deploy.yml
-          grep -Fq 'ssh -T' .github/workflows/deploy.yml
-          grep -Fq 'Verified health:' .github/workflows/deploy.yml
-          grep -Fq 'photoRecognition' .github/workflows/deploy.yml
-          grep -Fq 'backgroundAutomation' .github/workflows/deploy.yml
-          ! grep -Fq 'bash -s' .github/workflows/deploy.yml
-          ! grep -Fq 'docker compose' .github/workflows/deploy.yml
+          grep -Fq 'bash scripts/deploy-forced-client.sh' .github/workflows/deploy.yml
+          bash -n scripts/deploy-forced-client.sh
+          grep -Fq 'ServerAliveInterval=30' scripts/deploy-forced-client.sh
+          grep -Fq 'ssh -T' scripts/deploy-forced-client.sh
+          grep -Fq 'Verified health:' scripts/deploy-forced-client.sh
+          grep -Fq 'photoRecognition' scripts/deploy-forced-client.sh
+          grep -Fq 'backgroundAutomation' scripts/deploy-forced-client.sh
+          ! grep -Fq 'bash -s' scripts/deploy-forced-client.sh
+          ! grep -Fq 'docker compose' scripts/deploy-forced-client.sh
       - name: Validate self-contained production topology
         run: |
           docker compose -f docker-compose.server.yml config --quiet
