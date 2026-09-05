@@ -6,9 +6,13 @@ services:
     restart: unless-stopped
     init: true
     environment:
-      RUNTIME_SECRET_DIR: /run/runtime
+      RUNTIME_SHARED_DIR: /run/shared
+      RUNTIME_OPENAI_DIR: /run/openai
+      INTEGRATION_ENV_FILE: /run/integration/bureau.env
     volumes:
-      - runtime_secrets:/run/runtime
+      - /opt/bureau_nakhodok_suite/.env:/run/integration/bureau.env:ro
+      - runtime_shared:/run/shared
+      - runtime_openai:/run/openai
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -24,12 +28,16 @@ services:
     restart: unless-stopped
     init: true
     environment:
-      INTEGRATION_ENV_FILE: /run/integration/bureau.env
-      OPENAI_GATEWAY_TOKEN_FILE: /run/runtime/openai_gateway_token
-      GATEWAY_REQUIRE_UPSTREAM: "true"
+      RUNTIME_SHARED_DIR: /run/shared
+      RUNTIME_OPENAI_DIR: /run/openai
+      OPENAI_API_KEY_FILE: /run/openai/api_key
+      OPENAI_PROXY_URL_FILE: /run/openai/proxy_url
+      OPENAI_MODEL_FILE: /run/openai/model
+      OPENAI_GATEWAY_TOKEN_FILE: /run/shared/openai_gateway_token
+      OPENAI_CONFIG_STATUS_FILE: /run/shared/openai_config_status.json
     volumes:
-      - /opt/bureau_nakhodok_suite/.env:/run/integration/bureau.env:ro
-      - runtime_secrets:/run/runtime:ro
+      - runtime_shared:/run/shared:ro
+      - runtime_openai:/run/openai:ro
     expose:
       - "8080"
     depends_on:
@@ -56,9 +64,9 @@ services:
       WRANGLER_SEND_METRICS: "false"
       WRANGLER_LOG_PATH: /app/.wrangler/logs
       WRANGLER_STATE_DIR: /app/.wrangler/state
-      RUNTIME_SECRET_DIR: /run/runtime
-      OPENAI_GATEWAY_TOKEN_FILE: /run/runtime/openai_gateway_token
-      CRON_SECRET_FILE: /run/runtime/cron_secret
+      RUNTIME_SECRET_DIR: /run/shared
+      OPENAI_GATEWAY_TOKEN_FILE: /run/shared/openai_gateway_token
+      CRON_SECRET_FILE: /run/shared/cron_secret
       AUTH_MODE: ${AUTH_MODE:-standalone}
       EMAIL_VERIFICATION_REQUIRED: ${EMAIL_VERIFICATION_REQUIRED:-false}
       OPENAI_BASE_URL: http://openai-gateway:8080
@@ -94,7 +102,7 @@ services:
     volumes:
       - worker_state:/app/.wrangler
       - runtime_state:/app/.sites-runtime
-      - runtime_secrets:/run/runtime:ro
+      - runtime_shared:/run/shared:ro
     depends_on:
       runtime-init:
         condition: service_healthy
@@ -114,9 +122,9 @@ services:
     init: true
     environment:
       APP_INTERNAL_URL: http://app:8788
-      CRON_SECRET_FILE: /run/runtime/cron_secret
+      CRON_SECRET_FILE: /run/shared/cron_secret
     volumes:
-      - runtime_secrets:/run/runtime:ro
+      - runtime_shared:/run/shared:ro
     depends_on:
       runtime-init:
         condition: service_healthy
@@ -133,4 +141,5 @@ services:
 volumes:
   worker_state:
   runtime_state:
-  runtime_secrets:
+  runtime_shared:
+  runtime_openai:

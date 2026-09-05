@@ -13,7 +13,7 @@ def cron_secret() -> str:
     direct = (os.environ.get("CRON_SECRET") or "").strip()
     if direct:
         return direct
-    path = pathlib.Path(os.environ.get("CRON_SECRET_FILE") or "/run/runtime/cron_secret")
+    path = pathlib.Path(os.environ.get("CRON_SECRET_FILE") or "/run/shared/cron_secret")
     try:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
