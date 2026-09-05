@@ -40,6 +40,10 @@ def proxy_url() -> str:
     return env("OPENAI_PROXY_URL") or file_value(pathlib.Path(env("OPENAI_PROXY_URL_FILE") or OPENAI_DIR / "proxy_url"))
 
 
+def network_transport() -> str:
+    return "explicit-proxy" if proxy_url() else "direct-network"
+
+
 def gateway_token() -> str:
     return env("OPENAI_GATEWAY_TOKEN") or file_value(pathlib.Path(env("OPENAI_GATEWAY_TOKEN_FILE") or SHARED_DIR / "openai_gateway_token"))
 
@@ -62,6 +66,7 @@ def local_status() -> dict[str, object]:
     return {
         "apiKeyConfigured": bool(api_key()),
         "proxyConfigured": bool(proxy_url()),
+        "networkTransport": network_transport(),
         "gatewayTokenConfigured": bool(gateway_token()),
         "modelConfigured": bool(model()),
         "apiKeySource": extracted.get("apiKeySource", "runtime-file" if api_key() else "missing"),
@@ -77,17 +82,23 @@ def curl_request(method: str, path: str, body: bytes | None = None, timeout_seco
     proxy = proxy_url()
     if not key:
         raise RuntimeError("OPENAI_API_KEY is not configured")
-    if not proxy:
-        raise RuntimeError("OpenAI proxy is not configured")
     if not path.startswith("/v1/") or ".." in path:
         raise RuntimeError("unsupported OpenAI path")
 
     args = [
         "curl", "--silent", "--show-error", "--connect-timeout", "12", "--max-time", str(timeout_seconds),
-        "--proxy", proxy, "--noproxy", "", "--request", method, f"{OPENAI_ORIGIN}{path}",
+    ]
+    if proxy:
+        args.extend(["--proxy", proxy, "--noproxy", ""])
+    else:
+        # Ignore inherited HTTP(S)_PROXY variables and use the container/host
+        # routing directly. This mirrors Buro's AsyncOpenAI client behaviour.
+        args.extend(["--proxy", ""])
+    args.extend([
+        "--request", method, f"{OPENAI_ORIGIN}{path}",
         "--header", f"Authorization: Bearer {key}", "--header", "Content-Type: application/json",
         "--write-out", "\n__OPENAI_HTTP_STATUS__:%{http_code}",
-    ]
+    ])
     if body is not None:
         args.extend(["--data-binary", "@-"])
 
@@ -96,13 +107,14 @@ def curl_request(method: str, path: str, body: bytes | None = None, timeout_seco
     marker = b"\n__OPENAI_HTTP_STATUS__:"
     if marker not in output:
         detail = completed.stderr.decode("utf-8", "replace").lower()
+        prefix = "proxy" if proxy else "direct"
         if "timed out" in detail:
-            raise RuntimeError("proxy_timeout")
+            raise RuntimeError(f"{prefix}_timeout")
         if "could not resolve" in detail:
-            raise RuntimeError("proxy_dns_error")
+            raise RuntimeError(f"{prefix}_dns_error")
         if "connection refused" in detail or "failed to connect" in detail:
-            raise RuntimeError("proxy_connection_error")
-        raise RuntimeError("proxy_transport_error")
+            raise RuntimeError(f"{prefix}_connection_error")
+        raise RuntimeError(f"{prefix}_transport_error")
     payload, status_text = output.rsplit(marker, 1)
     try:
         status = int(status_text.strip())
@@ -120,7 +132,7 @@ def set_state(payload: dict[str, object]) -> None:
 def probe_upstream() -> None:
     local = local_status()
     set_state({**local, "ready": False, "checking": True, "checkedAt": time.time(), "status": "checking"})
-    if not local["apiKeyConfigured"] or not local["proxyConfigured"] or not local["gatewayTokenConfigured"]:
+    if not local["apiKeyConfigured"] or not local["gatewayTokenConfigured"] or not local["modelConfigured"]:
         set_state({**local, "ready": False, "checking": False, "checkedAt": time.time(), "status": "configuration_missing"})
         return
     try:
@@ -129,7 +141,7 @@ def probe_upstream() -> None:
         parsed = json.loads(payload or b"{}") if payload else {}
         if status == 200 and isinstance(parsed, dict) and parsed.get("id"):
             set_state({**local, "ready": True, "checking": False, "checkedAt": time.time(), "status": "ready", "httpStatus": 200})
-            print(f"OpenAI upstream ready via proxy using {model()}", flush=True)
+            print(f"OpenAI upstream ready via {network_transport()} using {model()}", flush=True)
             return
         error = parsed.get("error") if isinstance(parsed, dict) else None
         error_code = error.get("code") if isinstance(error, dict) else None
@@ -157,7 +169,7 @@ def readiness_payload() -> dict[str, object]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "BuyerAgentOpenAIGateway/1.4"
+    server_version = "BuyerAgentOpenAIGateway/1.5"
 
     def log_message(self, fmt, *args):
         sys.stdout.write("openai-gateway " + (fmt % args) + "\n")

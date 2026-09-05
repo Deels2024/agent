@@ -92,8 +92,9 @@ test("gateway remains available while exposing safe upstream readiness", () => {
   assert.match(openaiGateway, /\/ready/);
   assert.match(openaiGateway, /upstreamReady/);
   assert.match(openaiGateway, /candidateProxyKeys/);
+  assert.match(openaiGateway, /networkTransport/);
+  assert.match(openaiGateway, /direct-network/);
   assert.match(openaiGateway, /threading\.Thread/);
-  assert.match(openaiGateway, /proxy_timeout/);
   assert.match(openaiGateway, /request_payload\["model"\] = model\(\)/);
 });
 
