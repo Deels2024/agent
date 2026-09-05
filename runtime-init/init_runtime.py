@@ -3,11 +3,12 @@ import json
 import os
 import pathlib
 import secrets
-import signal
+import time
 from urllib.parse import quote
 
 RUNTIME_DIR = pathlib.Path(os.environ.get("RUNTIME_SECRET_DIR") or "/run/runtime")
 INTEGRATION_ENV = pathlib.Path(os.environ.get("INTEGRATION_ENV_FILE") or "/run/integration/bureau.env")
+REFRESH_SECONDS = max(10, int(os.environ.get("INTEGRATION_REFRESH_SECONDS") or "30"))
 
 
 def parse_env_file(path: pathlib.Path = INTEGRATION_ENV) -> dict[str, str]:
@@ -75,6 +76,21 @@ def proxy_url(values: dict[str, str]) -> str:
     return direct or split_proxy(values)
 
 
+def write_value(name: str, value: str) -> None:
+    path = RUNTIME_DIR / name
+    normalized = value.strip() + "\n"
+    try:
+        if path.read_text(encoding="utf-8") == normalized:
+            return
+    except OSError:
+        pass
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(normalized, encoding="utf-8")
+    temporary.chmod(0o444)
+    temporary.replace(path)
+    path.chmod(0o444)
+
+
 def ensure_generated_secret(name: str, length_bytes: int = 32) -> None:
     path = RUNTIME_DIR / name
     if path.exists() and path.stat().st_size > 0:
@@ -82,41 +98,46 @@ def ensure_generated_secret(name: str, length_bytes: int = 32) -> None:
     write_value(name, secrets.token_hex(length_bytes))
 
 
-def write_value(name: str, value: str) -> None:
-    path = RUNTIME_DIR / name
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(value.strip() + "\n", encoding="utf-8")
-    temporary.chmod(0o444)
-    temporary.replace(path)
-    path.chmod(0o444)
-
-
-def main() -> int:
+def integration_values() -> tuple[str, str, str]:
     values = parse_env_file()
     api_key = first_value(values, "OPENAI_API_KEY", "BN_OPENAI_API_KEY")
     proxy = proxy_url(values)
     model = first_value(values, "OPENAI_VISION_MODEL", "BN_OPENAI_MODEL") or "gpt-5.6-luna"
     if not api_key:
-        raise SystemExit("OPENAI_API_KEY is missing from the integration env")
+        raise RuntimeError("OPENAI_API_KEY is missing from the integration env")
     if not proxy:
         proxy_keys = sorted(key for key in values if "PROXY" in key.upper() or "TUNNEL" in key.upper())
-        print("OpenAI proxy is missing; available proxy variable names: " + ",".join(proxy_keys), flush=True)
-        raise SystemExit(78)
+        raise RuntimeError("OpenAI proxy is missing; available proxy variable names: " + ",".join(proxy_keys))
+    return api_key, proxy, model
 
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    ensure_generated_secret("openai_gateway_token")
-    ensure_generated_secret("cron_secret")
+
+def refresh_integration() -> str:
+    api_key, proxy, model = integration_values()
     write_value("openai_api_key", api_key)
     write_value("openai_proxy_url", proxy)
     write_value("openai_model", model)
+    return model
+
+
+def main() -> int:
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_generated_secret("openai_gateway_token")
+    ensure_generated_secret("cron_secret")
+    try:
+        model = refresh_integration()
+    except Exception as exc:
+        print(f"Runtime integration failed: {exc}", flush=True)
+        return 78
     write_value("ready", "ready")
-    print("Runtime integration ready: " + json.dumps({
-        "apiKeyConfigured": True,
-        "proxyConfigured": True,
-        "model": model,
-    }, separators=(",", ":")), flush=True)
-    signal.pause()
-    return 0
+    print("Runtime integration ready: " + json.dumps({"apiKeyConfigured": True, "proxyConfigured": True, "model": model}, separators=(",", ":")), flush=True)
+
+    while True:
+        time.sleep(REFRESH_SECONDS)
+        try:
+            refresh_integration()
+        except Exception as exc:
+            # Keep the last known-good narrow runtime files during a transient edit.
+            print(f"Runtime integration refresh skipped: {exc}", flush=True)
 
 
 if __name__ == "__main__":
