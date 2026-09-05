@@ -24,8 +24,14 @@ jobs:
           grep -Fq 'DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}' .github/workflows/deploy.yml
           grep -Fq 'ServerAliveInterval=30' .github/workflows/deploy.yml
           grep -Fq '/opt/bureau_nakhodok_suite/.env' .github/workflows/deploy.yml
+          grep -Fq '.deploy.runtime.env' .github/workflows/deploy.yml
+          grep -Fq -- '--env-file "$runtime_env"' .github/workflows/deploy.yml
           grep -Fq 'openai_gateway.py --check-upstream' .github/workflows/deploy.yml
+          grep -Fq 'OpenAI gateway env:' .github/workflows/deploy.yml
+          grep -Fq 'Worker runtime env:' .github/workflows/deploy.yml
           grep -Fq 'photoRecognition' .github/workflows/deploy.yml
+          grep -Fq 'backgroundAutomation' .github/workflows/deploy.yml
+          grep -Fq 'background job authentication probe failed' .github/workflows/deploy.yml
           grep -Fq 'automation_state' .github/workflows/deploy.yml
           grep -Fq 'http://127.0.0.1:8788/api/health' .github/workflows/deploy.yml
       - name: Validate container topology and secret exclusions
@@ -33,10 +39,12 @@ jobs:
           docker compose -f docker-compose.server.yml config --quiet
           grep -Fxq '.env' .dockerignore
           grep -Fxq '.env.*' .dockerignore
+          grep -Fxq '.deploy.runtime.env' .dockerignore
           grep -Fxq '.openai-gateway-token' .dockerignore
           grep -Fxq '.cron-secret' .dockerignore
           grep -Fq '127.0.0.1:8788:8788' docker-compose.server.yml
           grep -Fq 'APISHIP_API_TOKEN:' docker-compose.server.yml
+          grep -Fq 'OPENAI_VISION_MODEL:' docker-compose.server.yml
       - name: Validate auxiliary Python services
         run: python -m py_compile openai-gateway/openai_gateway.py automation/runner.py
       - run: npm ci

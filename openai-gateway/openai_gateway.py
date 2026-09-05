@@ -25,6 +25,10 @@ def api_key() -> str:
     return env("OPENAI_API_KEY")
 
 
+def model() -> str:
+    return env("OPENAI_VISION_MODEL") or "gpt-5.6-luna"
+
+
 def curl_request(method: str, path: str, body: bytes | None = None, timeout_seconds: int = 95):
     key = api_key()
     proxy = proxy_url()
@@ -75,12 +79,20 @@ def curl_request(method: str, path: str, body: bytes | None = None, timeout_seco
 
 def check_upstream() -> int:
     try:
-        status, payload = curl_request("GET", "/v1/models", timeout_seconds=30)
+        request_body = json.dumps({
+            "model": model(),
+            "input": "Reply only with OK.",
+            "max_output_tokens": 16,
+        }, separators=(",", ":")).encode("utf-8")
+        status, payload = curl_request("POST", "/v1/responses", body=request_body, timeout_seconds=60)
         parsed = json.loads(payload or b"{}") if payload else {}
-        if status != 200 or not isinstance(parsed, dict):
-            print(f"OpenAI upstream check failed with HTTP {status}", file=sys.stderr)
+        if status != 200 or not isinstance(parsed, dict) or not parsed.get("id"):
+            error = parsed.get("error") if isinstance(parsed, dict) else None
+            error_code = error.get("code") if isinstance(error, dict) else None
+            error_type = error.get("type") if isinstance(error, dict) else None
+            print(f"OpenAI upstream check failed with HTTP {status}; type={error_type or 'unknown'} code={error_code or 'unknown'}", file=sys.stderr)
             return 1
-        print("OpenAI upstream check: OK via configured proxy")
+        print(f"OpenAI upstream check: OK via configured proxy using {model()}")
         return 0
     except Exception as exc:
         print(f"OpenAI upstream check failed: {exc}", file=sys.stderr)
@@ -88,7 +100,7 @@ def check_upstream() -> int:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "BuyerAgentOpenAIGateway/1.0"
+    server_version = "BuyerAgentOpenAIGateway/1.1"
 
     def log_message(self, fmt, *args):
         sys.stdout.write("openai-gateway " + (fmt % args) + "\n")
@@ -116,6 +128,7 @@ class Handler(BaseHTTPRequestHandler):
                 "apiKeyConfigured": bool(api_key()),
                 "proxyConfigured": bool(proxy_url()),
                 "gatewayTokenConfigured": bool(gateway_token()),
+                "modelConfigured": bool(model()),
             })
             return
         self._json(404, {"error": "not_found"})
@@ -159,8 +172,14 @@ class Handler(BaseHTTPRequestHandler):
 def serve() -> int:
     host = env("GATEWAY_HOST") or "0.0.0.0"
     port = int(env("GATEWAY_PORT") or "8080")
+    print("OpenAI gateway config: " + json.dumps({
+        "apiKeyConfigured": bool(api_key()),
+        "proxyConfigured": bool(proxy_url()),
+        "gatewayTokenConfigured": bool(gateway_token()),
+        "model": model(),
+    }, separators=(",", ":")), flush=True)
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"OpenAI gateway listening on {host}:{port}")
+    print(f"OpenAI gateway listening on {host}:{port}", flush=True)
     server.serve_forever()
     return 0
 

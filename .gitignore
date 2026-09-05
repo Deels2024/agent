@@ -33,6 +33,7 @@ yarn-error.log*
 !.env.example
 
 # server-only generated secrets
+.deploy.runtime.env
 .openai-gateway-token
 .cron-secret
 

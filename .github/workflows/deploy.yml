@@ -55,8 +55,14 @@ jobs:
               set -Eeuo pipefail
               app_dir="$1"
               integration_env="/opt/bureau_nakhodok_suite/.env"
+              runtime_env="$app_dir/.deploy.runtime.env"
 
-              test -d "$app_dir/.git"
+              fail() {
+                echo "DEPLOY ERROR: $*" >&2
+                exit 1
+              }
+
+              test -d "$app_dir/.git" || fail "repository is missing at $app_dir"
               cd "$app_dir"
               git fetch --prune origin main
               git checkout -B main origin/main
@@ -78,17 +84,11 @@ jobs:
                 printf '%s' "$value"
               }
 
-              if [[ ! -f "$integration_env" ]]; then
-                echo "OpenAI integration file is missing: $integration_env" >&2
-                exit 78
-              fi
+              [[ -f "$integration_env" ]] || fail "OpenAI integration file is missing: $integration_env"
 
               OPENAI_API_KEY="$(read_env_value OPENAI_API_KEY)"
               [[ -n "$OPENAI_API_KEY" ]] || OPENAI_API_KEY="$(read_env_value BN_OPENAI_API_KEY)"
-              if [[ -z "$OPENAI_API_KEY" ]]; then
-                echo "OPENAI_API_KEY is not configured in the server integration file" >&2
-                exit 78
-              fi
+              [[ -n "$OPENAI_API_KEY" ]] || fail "OPENAI_API_KEY is not configured in the server integration file"
 
               OPENAI_PROXY_URL="$(read_env_value OPENAI_PROXY_URL)"
               for proxy_key in BN_OPENAI_PROXY_URL OPENAI_PROXY OPENAI_HTTPS_PROXY HTTPS_PROXY https_proxy ALL_PROXY all_proxy HTTP_PROXY http_proxy PROXY_URL PROXY OUTBOUND_PROXY_URL OUTBOUND_PROXY; do
@@ -96,9 +96,9 @@ jobs:
                 OPENAI_PROXY_URL="$(read_env_value "$proxy_key")"
               done
               if [[ -z "$OPENAI_PROXY_URL" ]]; then
-                echo "OpenAI proxy URL is not configured. Available proxy variable names:" >&2
+                echo "Available proxy variable names:" >&2
                 grep -Ei '^[A-Za-z_][A-Za-z0-9_]*(PROXY|TUNNEL)[A-Za-z0-9_]*=' "$integration_env" 2>/dev/null | cut -d= -f1 >&2 || true
-                exit 78
+                fail "OpenAI proxy URL is not configured"
               fi
 
               OPENAI_VISION_MODEL="$(read_env_value OPENAI_VISION_MODEL)"
@@ -127,12 +127,58 @@ jobs:
 
               export OPENAI_API_KEY OPENAI_PROXY_URL OPENAI_VISION_MODEL OPENAI_BASE_URL OPENAI_GATEWAY_TOKEN CRON_SECRET
 
-              docker compose -f docker-compose.server.yml config --quiet
-              docker compose -f docker-compose.server.yml build openai-gateway app automation
+              # Generate one deterministic server-only env file for Compose. It keeps
+              # Agent's own settings but overrides the OpenAI/automation values above.
+              if ! python3 - "$app_dir/.env" "$runtime_env" <<'PY'
+              import json
+              import os
+              import pathlib
+              import re
+              import sys
 
-              # Validate the new AI transport before replacing the running application.
-              docker compose -f docker-compose.server.yml up -d --no-build openai-gateway
-              gateway_id="$(docker compose -f docker-compose.server.yml ps -q openai-gateway)"
+              source = pathlib.Path(sys.argv[1])
+              target = pathlib.Path(sys.argv[2])
+              override = [
+                  "OPENAI_API_KEY",
+                  "OPENAI_PROXY_URL",
+                  "OPENAI_BASE_URL",
+                  "OPENAI_GATEWAY_TOKEN",
+                  "OPENAI_VISION_MODEL",
+                  "CRON_SECRET",
+              ]
+              lines = []
+              if source.exists():
+                  for line in source.read_text(encoding="utf-8").splitlines():
+                      match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=", line)
+                      if match and match.group(1) in override:
+                          continue
+                      lines.append(line)
+              for key in override:
+                  lines.append(f"{key}={json.dumps(os.environ.get(key, ''))}")
+              target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+              target.chmod(0o600)
+              PY
+              then
+                fail "could not generate server runtime env"
+              fi
+
+              compose=(docker compose --env-file "$runtime_env" -f docker-compose.server.yml)
+
+              if ! "${compose[@]}" config --quiet; then
+                fail "Docker Compose configuration is invalid"
+              fi
+              if ! "${compose[@]}" build openai-gateway app automation; then
+                fail "Docker images failed to build"
+              fi
+
+              # Start only the gateway. The current app stays untouched until a real
+              # Responses API call succeeds through the configured proxy.
+              if ! "${compose[@]}" up -d --no-build --no-deps openai-gateway; then
+                fail "OpenAI gateway could not start"
+              fi
+              gateway_id="$("${compose[@]}" ps -q openai-gateway)"
+              [[ -n "$gateway_id" ]] || fail "OpenAI gateway container id is missing"
+
               gateway_healthy=false
               for _ in $(seq 1 30); do
                 gateway_state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$gateway_id" 2>/dev/null || true)"
@@ -144,28 +190,88 @@ jobs:
                 sleep 2
               done
               if [[ "$gateway_healthy" != "true" ]]; then
-                echo "OpenAI gateway did not become healthy" >&2
-                docker compose -f docker-compose.server.yml logs --tail=80 openai-gateway >&2 || true
-                exit 1
+                "${compose[@]}" logs --tail=80 openai-gateway >&2 || true
+                fail "OpenAI gateway health check failed"
               fi
-              docker compose -f docker-compose.server.yml exec -T openai-gateway python /gateway/openai_gateway.py --check-upstream
 
-              docker compose -f docker-compose.server.yml up -d --no-build --wait app
-              health_payload="$(curl --retry 12 --retry-delay 2 --retry-connrefused --fail --silent --show-error http://127.0.0.1:8788/api/health)"
+              gateway_diag="$("${compose[@]}" exec -T openai-gateway python -c 'import json,os; print(json.dumps({"apiKey":bool(os.getenv("OPENAI_API_KEY")),"proxy":bool(os.getenv("OPENAI_PROXY_URL")),"token":bool(os.getenv("OPENAI_GATEWAY_TOKEN")),"model":bool(os.getenv("OPENAI_VISION_MODEL"))}))')"
+              printf 'OpenAI gateway env: %s\n' "$gateway_diag"
+              for required in apiKey proxy token model; do
+                if ! printf '%s' "$gateway_diag" | grep -Eq '"'"$required"'"[[:space:]]*:[[:space:]]*true'; then
+                  fail "OpenAI gateway is missing required runtime configuration: $required"
+                fi
+              done
+
+              if ! "${compose[@]}" exec -T openai-gateway python /gateway/openai_gateway.py --check-upstream; then
+                "${compose[@]}" logs --tail=80 openai-gateway >&2 || true
+                fail "OpenAI Responses API probe through proxy failed"
+              fi
+
+              if ! "${compose[@]}" up -d --no-build --no-deps app; then
+                fail "application container could not start"
+              fi
+              app_id="$("${compose[@]}" ps -q app)"
+              [[ -n "$app_id" ]] || fail "application container id is missing"
+              app_healthy=false
+              for _ in $(seq 1 45); do
+                app_state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$app_id" 2>/dev/null || true)"
+                if [[ "$app_state" == "healthy" ]]; then
+                  app_healthy=true
+                  break
+                fi
+                [[ "$app_state" == "unhealthy" ]] && break
+                sleep 2
+              done
+              if [[ "$app_healthy" != "true" ]]; then
+                "${compose[@]}" logs --tail=100 app >&2 || true
+                fail "application health check failed"
+              fi
+
+              runtime_diag="$("${compose[@]}" exec -T app node -e 'const fs=require("fs");const c=JSON.parse(fs.readFileSync("/app/dist/server/wrangler.runtime.json","utf8"));console.log(JSON.stringify({base:Boolean(c.vars?.OPENAI_BASE_URL),token:Boolean(c.vars?.OPENAI_GATEWAY_TOKEN),cron:Boolean(c.vars?.CRON_SECRET),model:Boolean(c.vars?.OPENAI_VISION_MODEL)}));')"
+              printf 'Worker runtime env: %s\n' "$runtime_diag"
+              for required in base token cron model; do
+                if ! printf '%s' "$runtime_diag" | grep -Eq '"'"$required"'"[[:space:]]*:[[:space:]]*true'; then
+                  fail "Worker runtime is missing required configuration: $required"
+                fi
+              done
+
+              if ! health_payload="$(curl --retry 12 --retry-delay 2 --retry-connrefused --fail --silent --show-error http://127.0.0.1:8788/api/health)"; then
+                fail "public backend health endpoint is unavailable"
+              fi
               printf '%s\n' "$health_payload"
-              printf '%s' "$health_payload" | grep -Eq '"database"[[:space:]]*:[[:space:]]*"ready"'
-              printf '%s' "$health_payload" | grep -Eq '"photoRecognition"[[:space:]]*:[[:space:]]*true'
-              printf '%s' "$health_payload" | grep -Eq '"aiTransport"[[:space:]]*:[[:space:]]*"proxy-gateway"'
+              for pattern in \
+                '"database"[[:space:]]*:[[:space:]]*"ready"' \
+                '"photoRecognition"[[:space:]]*:[[:space:]]*true' \
+                '"backgroundAutomation"[[:space:]]*:[[:space:]]*true' \
+                '"aiTransport"[[:space:]]*:[[:space:]]*"proxy-gateway"'; do
+                if ! printf '%s' "$health_payload" | grep -Eq "$pattern"; then
+                  fail "backend readiness assertion failed: $pattern"
+                fi
+              done
 
-              docker compose -f docker-compose.server.yml up -d --no-build automation
-              sleep 3
-              automation_id="$(docker compose -f docker-compose.server.yml ps -q automation)"
-              automation_state="$(docker inspect --format '{{.State.Status}}' "$automation_id" 2>/dev/null || true)"
-              if [[ "$automation_state" != "running" ]]; then
-                echo "Background automation is not running" >&2
-                docker compose -f docker-compose.server.yml logs --tail=80 automation >&2 || true
-                exit 1
+              if ! job_probe="$(curl --fail --silent --show-error -X POST -H "Authorization: Bearer $CRON_SECRET" -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8788/api/jobs/price-alerts)"; then
+                fail "background job authentication probe failed"
               fi
+              printf 'Background job probe: %s\n' "$job_probe"
+
+              if ! "${compose[@]}" up -d --no-build --no-deps automation; then
+                fail "background automation container could not start"
+              fi
+              automation_id="$("${compose[@]}" ps -q automation)"
+              [[ -n "$automation_id" ]] || fail "automation container id is missing"
+              sleep 4
+              automation_state="$(docker inspect --format '{{.State.Status}}' "$automation_id" 2>/dev/null || true)"
+              [[ "$automation_state" == "running" ]] || {
+                "${compose[@]}" logs --tail=80 automation >&2 || true
+                fail "background automation is not running"
+              }
+              automation_diag="$("${compose[@]}" exec -T automation python -c 'import json,os; print(json.dumps({"cron":bool(os.getenv("CRON_SECRET")),"appUrl":bool(os.getenv("APP_INTERNAL_URL"))}))')"
+              printf 'Automation env: %s\n' "$automation_diag"
+              for required in cron appUrl; do
+                if ! printf '%s' "$automation_diag" | grep -Eq '"'"$required"'"[[:space:]]*:[[:space:]]*true'; then
+                  fail "automation runtime is missing required configuration: $required"
+                fi
+              done
 
               printf 'Deployed agent commit %s\n' "$(git rev-parse HEAD)"
           REMOTE

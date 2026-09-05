@@ -18,9 +18,9 @@ ENV NODE_ENV=production \
     WRANGLER_LOG_PATH=/app/.wrangler/logs \
     WRANGLER_STATE_DIR=/app/.wrangler/state
 WORKDIR /app
-COPY --from=build /app /app
+COPY --chown=node:node --from=build /app /app
 RUN mkdir -p /app/.wrangler /app/.sites-runtime \
-    && chown -R node:node /app
+    && chown node:node /app/.wrangler /app/.sites-runtime
 USER node
 EXPOSE 8788
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
