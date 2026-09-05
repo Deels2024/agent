@@ -5,5 +5,8 @@ COPY automation/runner.py /automation/runner.py
 RUN useradd --create-home --uid 10002 automation \
     && chown -R automation:automation /automation
 USER automation
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import pathlib,time; p=pathlib.Path('/tmp/automation.heartbeat'); raise SystemExit(0 if p.is_file() and time.time()-p.stat().st_mtime<75 else 1)"
 CMD ["python", "/automation/runner.py"]
