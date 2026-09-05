@@ -1,0 +1,22 @@
+FROM python:3.13-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /gateway
+COPY openai-gateway/openai_gateway.py /gateway/openai_gateway.py
+
+RUN useradd --create-home --uid 10001 gateway \
+    && chown -R gateway:gateway /gateway
+
+USER gateway
+ENV PYTHONUNBUFFERED=1 \
+    GATEWAY_HOST=0.0.0.0 \
+    GATEWAY_PORT=8080
+
+EXPOSE 8080
+HEALTHCHECK --interval=20s --timeout=5s --start-period=5s --retries=3 \
+  CMD python -c "import json,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3); b=json.load(r); raise SystemExit(0 if r.status==200 and b.get('ok') else 1)"
+
+CMD ["python", "/gateway/openai_gateway.py"]

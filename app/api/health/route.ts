@@ -1,34 +1,45 @@
 import { ensureMarketplaceSchema } from "../../../db/ensure";
-import { hasRuntimeValue, runtimeEnv } from "../../../lib/runtime";
+import { openAIConfigured, openAITransport } from "../../../lib/openai";
+import { hasRuntimeValue, runtimeEnv, runtimeValue } from "../../../lib/runtime";
 import { authMode } from "../../../lib/standalone-auth";
+
+const compliantPaymentModels = new Set(["seller_direct", "bank_safe_deal", "split_payment"]);
 
 export async function GET() {
   const databaseReady = await databaseIsReady();
+  const deliveryConfigured = hasRuntimeValue("APISHIP_API_TOKEN") || hasRuntimeValue("DELIVERY_API_KEY");
+  const notificationsConfigured = hasRuntimeValue("NOTIFICATION_WEBHOOK_URL") && hasRuntimeValue("NOTIFICATION_WEBHOOK_SECRET");
+  const paymentConfigured = runtimeValue("PAYMENT_PROVIDER") === "webhook"
+    && compliantPaymentModels.has(runtimeValue("PAYMENT_MODEL") ?? "")
+    && hasRuntimeValue("PAYMENT_API_URL")
+    && hasRuntimeValue("PAYMENT_API_KEY");
   return Response.json({
     ok: true,
     service: "buyer-agent-backend",
-    version: "0.7.0",
+    version: "0.8.0",
     timestamp: new Date().toISOString(),
     runtime: {
       database: databaseReady ? "ready" : "unavailable",
       authentication: authMode(),
+      aiTransport: openAITransport(),
       databaseRequiredFor: ["registration", "account", "seller", "orders", "admin"],
     },
     capabilities: {
       textSearch: true,
       barcodeSearch: true,
-      photoRecognition: hasRuntimeValue("OPENAI_API_KEY"),
+      photoRecognition: openAIConfigured(),
       priceHistory: true,
       persistentSearches: databaseReady,
       accounts: databaseReady,
       sellerCabinet: databaseReady,
       ordersAndDisputes: databaseReady,
+      backgroundAutomation: databaseReady && hasRuntimeValue("CRON_SECRET"),
       deliveryPlanner: databaseReady,
-      deliveryNetwork: hasRuntimeValue("APISHIP_API_TOKEN") || hasRuntimeValue("DELIVERY_API_KEY"),
-      pickupPoints: hasRuntimeValue("APISHIP_API_TOKEN") || hasRuntimeValue("DELIVERY_API_KEY"),
+      deliveryNetwork: deliveryConfigured,
+      pickupPoints: deliveryConfigured,
       encryptedSellerCredentials: hasRuntimeValue("CREDENTIAL_ENCRYPTION_KEY"),
-      paymentGateway: hasRuntimeValue("PAYMENT_PROVIDER") && hasRuntimeValue("PAYMENT_API_KEY"),
-      notifications: hasRuntimeValue("NOTIFICATION_WEBHOOK_URL") && hasRuntimeValue("NOTIFICATION_WEBHOOK_SECRET"),
+      paymentGateway: paymentConfigured,
+      notifications: notificationsConfigured,
     },
   });
 }

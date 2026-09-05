@@ -1,9 +1,30 @@
 services:
+  openai-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.openai-gateway
+    restart: unless-stopped
+    init: true
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_PROXY_URL: ${OPENAI_PROXY_URL:-}
+      OPENAI_GATEWAY_TOKEN: ${OPENAI_GATEWAY_TOKEN:-}
+    expose:
+      - "8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+
   app:
     build: .
     restart: unless-stopped
+    init: true
     ports:
-      - "0.0.0.0:8788:8788"
+      - "127.0.0.1:8788:8788"
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
@@ -13,8 +34,9 @@ services:
       WRANGLER_STATE_DIR: /app/.wrangler/state
       AUTH_MODE: ${AUTH_MODE:-standalone}
       EMAIL_VERIFICATION_REQUIRED: ${EMAIL_VERIFICATION_REQUIRED:-false}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-gpt-5.4-nano}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://openai-gateway:8080}
+      OPENAI_GATEWAY_TOKEN: ${OPENAI_GATEWAY_TOKEN:-}
+      OPENAI_VISION_MODEL: ${OPENAI_VISION_MODEL:-gpt-5.6-luna}
       WB_API_TOKEN: ${WB_API_TOKEN:-}
       WB_CLIENT_SECRET: ${WB_CLIENT_SECRET:-}
       OZON_CLIENT_ID: ${OZON_CLIENT_ID:-}
@@ -32,6 +54,7 @@ services:
       KYC_PROVIDER: ${KYC_PROVIDER:-}
       KYC_API_KEY: ${KYC_API_KEY:-}
       DELIVERY_PROVIDER: ${DELIVERY_PROVIDER:-}
+      APISHIP_API_TOKEN: ${APISHIP_API_TOKEN:-}
       DELIVERY_API_KEY: ${DELIVERY_API_KEY:-}
       DELIVERY_WEBHOOK_SECRET: ${DELIVERY_WEBHOOK_SECRET:-}
       NOTIFICATION_WEBHOOK_URL: ${NOTIFICATION_WEBHOOK_URL:-}
@@ -51,6 +74,26 @@ services:
     cap_drop:
       - ALL
     stop_grace_period: 30s
+
+  automation:
+    build:
+      context: .
+      dockerfile: Dockerfile.automation
+    restart: unless-stopped
+    init: true
+    environment:
+      APP_INTERNAL_URL: http://app:8788
+      CRON_SECRET: ${CRON_SECRET:-}
+    depends_on:
+      app:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
 
 volumes:
   worker_state:

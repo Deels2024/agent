@@ -1,0 +1,9 @@
+FROM python:3.13-slim
+
+WORKDIR /automation
+COPY automation/runner.py /automation/runner.py
+RUN useradd --create-home --uid 10002 automation \
+    && chown -R automation:automation /automation
+USER automation
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "/automation/runner.py"]
