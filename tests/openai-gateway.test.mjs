@@ -95,10 +95,68 @@ print(json.dumps(m.local_status()))
     assert.equal(status.apiKeyConfigured, true);
     assert.equal(status.apiKeySource, "bureau-nakhodok_openai_secret/openai_api_key");
     assert.equal(status.proxyConfigured, true);
+    assert.equal(status.networkTransport, "explicit-proxy");
     assert.equal(status.gatewayTokenConfigured, true);
     assert.equal(JSON.stringify(status).includes("sk-test-protected-key"), false);
     assert.equal(JSON.stringify(status).includes("http://127.0.0.1:3128"), false);
   } finally {
     await rm(result.directory, { recursive: true, force: true });
+  }
+});
+
+test("gateway uses direct-network when proxy settings are empty and disables inherited curl proxies", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agent-openai-direct-"));
+  try {
+    const shared = join(directory, "shared");
+    const openai = join(directory, "openai");
+    const keyFile = join(directory, "openai_api_key");
+    await mkdir(shared, { recursive: true });
+    await mkdir(openai, { recursive: true });
+    await writeFile(join(shared, "openai_gateway_token"), "gateway-token\n");
+    await writeFile(join(shared, "openai_config_status.json"), JSON.stringify({ apiKeySource: "bureau-nakhodok_openai_secret/openai_api_key", proxySource: "missing", modelSource: "BN_OPENAI_MODEL" }));
+    await writeFile(join(openai, "proxy_url"), "");
+    await writeFile(join(openai, "model"), "gpt-5.6\n");
+    await writeFile(keyFile, "sk-test-key\n");
+    const code = `
+import importlib.util, json, subprocess
+spec=importlib.util.spec_from_file_location("gateway", ${JSON.stringify(gatewayPath)})
+m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+captured={}
+class Completed:
+    stdout=b'{"id":"resp_test"}\\n__OPENAI_HTTP_STATUS__:200'
+    stderr=b''
+def fake_run(args, **kwargs):
+    captured["args"]=args
+    return Completed()
+m.subprocess.run=fake_run
+status=m.local_status()
+http_status,_=m.curl_request("POST","/v1/responses",b'{}',5)
+print(json.dumps({"status":status,"httpStatus":http_status,"args":captured["args"]}))
+`;
+    const { stdout } = await execFileAsync("python3", ["-c", code], {
+      env: {
+        ...process.env,
+        RUNTIME_SHARED_DIR: shared,
+        RUNTIME_OPENAI_DIR: openai,
+        OPENAI_API_KEY_FILE: keyFile,
+        OPENAI_GATEWAY_TOKEN_FILE: join(shared, "openai_gateway_token"),
+        OPENAI_CONFIG_STATUS_FILE: join(shared, "openai_config_status.json"),
+        OPENAI_PROXY_URL_FILE: join(openai, "proxy_url"),
+        OPENAI_MODEL_FILE: join(openai, "model"),
+        OPENAI_API_KEY: "",
+        OPENAI_PROXY_URL: "",
+        OPENAI_GATEWAY_TOKEN: "",
+      },
+    });
+    const result = JSON.parse(stdout.trim());
+    assert.equal(result.status.apiKeyConfigured, true);
+    assert.equal(result.status.proxyConfigured, false);
+    assert.equal(result.status.networkTransport, "direct-network");
+    assert.equal(result.httpStatus, 200);
+    const proxyIndex = result.args.indexOf("--proxy");
+    assert.ok(proxyIndex >= 0);
+    assert.equal(result.args[proxyIndex + 1], "");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
