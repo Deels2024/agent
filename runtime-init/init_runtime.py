@@ -9,7 +9,6 @@ from urllib.parse import quote
 SHARED_DIR = pathlib.Path(os.environ.get("RUNTIME_SHARED_DIR") or "/run/shared")
 OPENAI_DIR = pathlib.Path(os.environ.get("RUNTIME_OPENAI_DIR") or "/run/openai")
 INTEGRATION_ENV = pathlib.Path(os.environ.get("INTEGRATION_ENV_FILE") or "/run/integration/bureau.env")
-BURO_OPENAI_KEY_FILE = pathlib.Path(os.environ.get("BURO_OPENAI_KEY_FILE") or "/run/bureau-openai/openai_api_key")
 
 
 def atomic_write(path: pathlib.Path, value: str, mode: int = 0o444) -> None:
@@ -53,13 +52,6 @@ def first(values: dict[str, str], *names: str) -> tuple[str, str]:
         if value:
             return value, name
     return "", ""
-
-
-def read_secret(path: pathlib.Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
 
 
 def build_split_proxy(values: dict[str, str]) -> tuple[str, str]:
@@ -111,14 +103,8 @@ def build_split_proxy(values: dict[str, str]) -> tuple[str, str]:
     return "", ""
 
 
-def extract_openai_configuration() -> dict[str, object]:
+def extract_openai_transport_configuration() -> dict[str, object]:
     values = parse_env_file(INTEGRATION_ENV)
-    api_key, key_source = first(values, "OPENAI_API_KEY", "BN_OPENAI_API_KEY")
-    if not api_key:
-        api_key = read_secret(BURO_OPENAI_KEY_FILE)
-        if api_key:
-            key_source = "bureau-nakhodok_openai_secret/openai_api_key"
-
     proxy, proxy_source = first(
         values,
         "OPENAI_PROXY_URL", "BN_OPENAI_PROXY_URL", "OPENAI_PROXY", "OPENAI_HTTPS_PROXY",
@@ -131,19 +117,16 @@ def extract_openai_configuration() -> dict[str, object]:
     model = model or "gpt-5.6-luna"
     model_source = model_source or "default"
 
-    atomic_write(OPENAI_DIR / "api_key", api_key + ("\n" if api_key else ""))
     atomic_write(OPENAI_DIR / "proxy_url", proxy + ("\n" if proxy else ""))
     atomic_write(OPENAI_DIR / "model", model + "\n")
 
     status = {
-        "apiKeyConfigured": bool(api_key),
-        "apiKeySource": key_source or "missing",
+        "apiKeySource": "bureau-nakhodok_openai_secret/openai_api_key",
         "proxyConfigured": bool(proxy),
         "proxySource": proxy_source or "missing",
         "modelConfigured": bool(model),
         "modelSource": model_source,
         "candidateProxyKeys": sorted(key for key in values if "PROXY" in key.upper() or "TUNNEL" in key.upper())[:30],
-        "buroSecretFilePresent": BURO_OPENAI_KEY_FILE.is_file(),
     }
     atomic_write(SHARED_DIR / "openai_config_status.json", json.dumps(status, ensure_ascii=False, separators=(",", ":")) + "\n")
     return status
@@ -157,19 +140,18 @@ def main() -> int:
 
     status: dict[str, object]
     try:
-        status = extract_openai_configuration()
+        status = extract_openai_transport_configuration()
     except Exception as exc:
         status = {
-            "apiKeyConfigured": False,
+            "apiKeySource": "bureau-nakhodok_openai_secret/openai_api_key",
             "proxyConfigured": False,
             "modelConfigured": False,
             "extractorError": type(exc).__name__,
-            "buroSecretFilePresent": BURO_OPENAI_KEY_FILE.is_file(),
         }
         atomic_write(SHARED_DIR / "openai_config_status.json", json.dumps(status, separators=(",", ":")) + "\n")
 
     atomic_write(SHARED_DIR / "ready", "ready\n")
-    print("Runtime secrets ready: " + json.dumps(status, ensure_ascii=False, separators=(",", ":")), flush=True)
+    print("Runtime transport ready: " + json.dumps(status, ensure_ascii=False, separators=(",", ":")), flush=True)
     signal.pause()
     return 0
 
