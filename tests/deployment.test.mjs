@@ -104,7 +104,7 @@ test("OpenAI production traffic is isolated behind an internal authenticated pro
   assert.match(openaiGateway, /--check-upstream/);
   assert.doesNotMatch(compose.match(/\n  openai-gateway:[\s\S]*?\n  app:/)?.[0] ?? "", /ports:/);
   assert.match(deployWorkflow, /openai_gateway\.py --check-upstream/);
-  assert.match(deployWorkflow, /OPENAI gateway env/);
+  assert.match(deployWorkflow, /OpenAI gateway env/);
   assert.match(deployWorkflow, /Worker runtime env/);
 });
 
