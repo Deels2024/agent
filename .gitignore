@@ -32,6 +32,10 @@ yarn-error.log*
 .env*
 !.env.example
 
+# server-only generated secrets
+.openai-gateway-token
+.cron-secret
+
 # vercel
 .vercel
 
