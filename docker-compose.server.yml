@@ -3,11 +3,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.runtime-init
-    restart: unless-stopped
+    restart: "on-failure:3"
     init: true
     environment:
       RUNTIME_SECRET_DIR: /run/runtime
+      INTEGRATION_ENV_FILE: /run/integration/bureau.env
     volumes:
+      - /opt/bureau_nakhodok_suite/.env:/run/integration/bureau.env:ro
       - runtime_secrets:/run/runtime
     security_opt:
       - no-new-privileges:true
@@ -21,14 +23,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.openai-gateway
-    restart: unless-stopped
+    restart: "on-failure:3"
     init: true
     environment:
-      INTEGRATION_ENV_FILE: /run/integration/bureau.env
+      RUNTIME_SECRET_DIR: /run/runtime
+      OPENAI_API_KEY_FILE: /run/runtime/openai_api_key
+      OPENAI_PROXY_URL_FILE: /run/runtime/openai_proxy_url
       OPENAI_GATEWAY_TOKEN_FILE: /run/runtime/openai_gateway_token
+      OPENAI_VISION_MODEL_FILE: /run/runtime/openai_model
       GATEWAY_REQUIRE_UPSTREAM: "true"
     volumes:
-      - /opt/bureau_nakhodok_suite/.env:/run/integration/bureau.env:ro
       - runtime_secrets:/run/runtime:ro
     expose:
       - "8080"
