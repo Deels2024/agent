@@ -1,12 +1,12 @@
 import { ensureMarketplaceSchema } from "../../../db/ensure";
-import { openAIConfigured, openAITransport } from "../../../lib/openai";
+import { openAIReadiness, openAITransport } from "../../../lib/openai";
 import { hasRuntimeValue, runtimeEnv, runtimeValue } from "../../../lib/runtime";
 import { authMode } from "../../../lib/standalone-auth";
 
 const compliantPaymentModels = new Set(["seller_direct", "bank_safe_deal", "split_payment"]);
 
 export async function GET() {
-  const databaseReady = await databaseIsReady();
+  const [databaseReady, ai] = await Promise.all([databaseIsReady(), openAIReadiness()]);
   const deliveryConfigured = hasRuntimeValue("APISHIP_API_TOKEN") || hasRuntimeValue("DELIVERY_API_KEY");
   const notificationsConfigured = hasRuntimeValue("NOTIFICATION_WEBHOOK_URL") && hasRuntimeValue("NOTIFICATION_WEBHOOK_SECRET");
   const paymentConfigured = runtimeValue("PAYMENT_PROVIDER") === "webhook"
@@ -16,18 +16,20 @@ export async function GET() {
   return Response.json({
     ok: true,
     service: "buyer-agent-backend",
-    version: "0.8.0",
+    version: "0.8.1",
     timestamp: new Date().toISOString(),
     runtime: {
       database: databaseReady ? "ready" : "unavailable",
       authentication: authMode(),
       aiTransport: openAITransport(),
+      aiUpstream: ai.ready ? "ready" : "unavailable",
+      aiDiagnostic: ai.diagnostic ?? null,
       databaseRequiredFor: ["registration", "account", "seller", "orders", "admin"],
     },
     capabilities: {
       textSearch: true,
       barcodeSearch: true,
-      photoRecognition: openAIConfigured(),
+      photoRecognition: ai.ready,
       priceHistory: true,
       persistentSearches: databaseReady,
       accounts: databaseReady,
