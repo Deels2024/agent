@@ -12,18 +12,21 @@ async function request(path, environment = {}) {
   return worker.fetch(new Request(`http://localhost${path}`), { ASSETS: assets, ...environment }, context);
 }
 
-test("health recognizes the internal OpenAI gateway without exposing an API key to the Worker", async () => {
+test("health requires a reachable ready OpenAI gateway, not only local token configuration", async () => {
   const response = await request("/api/health", {
     OPENAI_BASE_URL: "http://openai-gateway:8080",
     OPENAI_GATEWAY_TOKEN: "gateway-test-token",
   });
   assert.equal(response.status, 200);
   const payload = await response.json();
-  assert.equal(payload.capabilities.photoRecognition, true);
+  assert.equal(payload.capabilities.photoRecognition, false);
   assert.equal(payload.runtime.aiTransport, "proxy-gateway");
+  assert.equal(payload.runtime.aiUpstream, "unavailable");
+  assert.ok(["gateway_unreachable", "gateway_readiness_timeout"].includes(payload.runtime.aiDiagnostic?.status));
+  assert.equal(JSON.stringify(payload).includes("gateway-test-token"), false);
 });
 
-test("marketplace admin status uses the same OpenAI readiness source as health", async () => {
+test("marketplace admin status reports configured transport without exposing the gateway token", async () => {
   const response = await worker.fetch(new Request("http://localhost/api/marketplaces/status", {
     headers: { "oai-authenticated-user-email": "admin@example.test" },
   }), {
