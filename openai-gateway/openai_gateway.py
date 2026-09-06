@@ -46,8 +46,6 @@ def proxy_configuration() -> tuple[str, str]:
         status = config_status()
         return extracted, str(status.get("proxySource") or "runtime-file")
 
-    # Docker can inject these runtime variables from its proxy configuration.
-    # Buro's AsyncOpenAI/httpx client trusts the same environment by default.
     for name in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"):
         value = env(name)
         if value:
@@ -100,6 +98,8 @@ def local_status() -> dict[str, object]:
         "proxySource": source,
         "modelSource": extracted.get("modelSource", "runtime-file" if model() else "missing"),
         "candidateProxyKeys": extracted.get("candidateProxyKeys", []),
+        "proxyComponentPresence": extracted.get("proxyComponentPresence", {}),
+        "proxyComponentShapes": extracted.get("proxyComponentShapes", {}),
         "extractorError": extracted.get("extractorError"),
     }
 
@@ -118,7 +118,6 @@ def curl_request(method: str, path: str, body: bytes | None = None, timeout_seco
     if proxy:
         args.extend(["--proxy", proxy, "--noproxy", ""])
     else:
-        # No configured or inherited proxy: use the container/host route directly.
         args.extend(["--proxy", ""])
     args.extend([
         "--request", method, f"{OPENAI_ORIGIN}{path}",
@@ -195,7 +194,7 @@ def readiness_payload() -> dict[str, object]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "BuyerAgentOpenAIGateway/1.6"
+    server_version = "BuyerAgentOpenAIGateway/1.7"
 
     def log_message(self, fmt, *args):
         sys.stdout.write("openai-gateway " + (fmt % args) + "\n")

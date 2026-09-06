@@ -110,8 +110,6 @@ def build_split_proxy(values: dict[str, str]) -> tuple[str, str]:
 
         source_host = "ADDRESS" if values.get(f"{prefix}_ADDRESS") else "HOST" if values.get(f"{prefix}_HOST") else "IP"
 
-        # Some providers store the entire endpoint in PROXY_ADDRESS. Accept both
-        # scheme://host:port and host:port forms even when PROXY_PORT is blank.
         if "://" in address:
             parsed = urlsplit(address)
             host = parsed.hostname or ""
@@ -136,6 +134,30 @@ def build_split_proxy(values: dict[str, str]) -> tuple[str, str]:
     return "", ""
 
 
+def safe_component_shape(key: str, value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return "empty"
+    upper = key.upper()
+    if upper.endswith(("_PASSWORD", "_PASS", "_LOGIN", "_USER", "_USERNAME")):
+        return "set"
+    if upper.endswith("_PORT"):
+        return "numeric" if value.isdigit() else "non_numeric"
+    if upper.endswith(("_SCHEME", "_TYPE", "_PROTOCOL")):
+        return "known" if value.lower() in {"http", "https", "socks", "socks4", "socks4a", "socks5", "socks5h"} else "unknown"
+    if upper.endswith(("_ADDRESS", "_HOST", "_IP")):
+        if "://" in value:
+            return "url"
+        if value.count(":") == 1 and value.rsplit(":", 1)[1].isdigit():
+            return "host_port"
+        if value.startswith("$") or "${" in value:
+            return "variable_reference"
+        if any(ch.isspace() for ch in value):
+            return "contains_whitespace"
+        return "host"
+    return "set"
+
+
 def extract_openai_transport_configuration() -> dict[str, object]:
     values = parse_env_file(INTEGRATION_ENV)
     proxy, proxy_source = first(
@@ -154,10 +176,16 @@ def extract_openai_transport_configuration() -> dict[str, object]:
     atomic_write(OPENAI_DIR / "model", model + "\n")
 
     candidate_keys = sorted(key for key in values if "PROXY" in key.upper() or "TUNNEL" in key.upper())[:30]
+    relevant_suffixes = ("_ADDRESS", "_HOST", "_IP", "_PORT", "_SCHEME", "_TYPE", "_PROTOCOL", "_LOGIN", "_USER", "_USERNAME", "_PASSWORD", "_PASS")
     component_presence = {
         key: bool((values.get(key) or "").strip())
         for key in candidate_keys
-        if key.upper().endswith(("_ADDRESS", "_HOST", "_IP", "_PORT", "_SCHEME", "_TYPE", "_PROTOCOL", "_LOGIN", "_USER", "_USERNAME", "_PASSWORD", "_PASS"))
+        if key.upper().endswith(relevant_suffixes)
+    }
+    component_shapes = {
+        key: safe_component_shape(key, values.get(key) or "")
+        for key in candidate_keys
+        if key.upper().endswith(relevant_suffixes)
     }
     status = {
         "apiKeySource": "bureau-nakhodok_openai_secret/openai_api_key",
@@ -167,6 +195,7 @@ def extract_openai_transport_configuration() -> dict[str, object]:
         "modelSource": model_source,
         "candidateProxyKeys": candidate_keys,
         "proxyComponentPresence": component_presence,
+        "proxyComponentShapes": component_shapes,
     }
     atomic_write(SHARED_DIR / "openai_config_status.json", json.dumps(status, ensure_ascii=False, separators=(",", ":")) + "\n")
     return status
