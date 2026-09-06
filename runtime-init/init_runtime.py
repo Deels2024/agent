@@ -4,7 +4,7 @@ import os
 import pathlib
 import secrets
 import signal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 SHARED_DIR = pathlib.Path(os.environ.get("RUNTIME_SHARED_DIR") or "/run/shared")
 OPENAI_DIR = pathlib.Path(os.environ.get("RUNTIME_OPENAI_DIR") or "/run/openai")
@@ -54,28 +54,43 @@ def first(values: dict[str, str], *names: str) -> tuple[str, str]:
     return "", ""
 
 
+def normalized_scheme(raw: str) -> str:
+    protocol = (raw or "http").strip().lower()
+    if protocol in {"socks", "socks5"}:
+        return "socks5h"
+    if protocol not in {"http", "https", "socks4", "socks4a", "socks5", "socks5h"}:
+        return "http"
+    return protocol
+
+
+def proxy_auth(user: str, password: str) -> str:
+    if not user:
+        return ""
+    auth = quote(user, safe="")
+    if password:
+        auth += ":" + quote(password, safe="")
+    return auth + "@"
+
+
 def build_split_proxy(values: dict[str, str]) -> tuple[str, str]:
     prefixes = ("OPENAI_PROXY", "BN_OPENAI_PROXY", "PROXY", "OUTBOUND_PROXY")
     for prefix in prefixes:
-        host = (
+        address = (
             values.get(f"{prefix}_HOST")
             or values.get(f"{prefix}_ADDRESS")
             or values.get(f"{prefix}_IP")
             or ""
         ).strip()
         port = (values.get(f"{prefix}_PORT") or "").strip()
-        if not host or not port:
+        if not address:
             continue
-        protocol = (
+
+        scheme = normalized_scheme(
             values.get(f"{prefix}_SCHEME")
             or values.get(f"{prefix}_TYPE")
             or values.get(f"{prefix}_PROTOCOL")
             or "http"
-        ).strip().lower()
-        if protocol in {"socks", "socks5"}:
-            protocol = "socks5h"
-        if protocol not in {"http", "https", "socks4", "socks4a", "socks5", "socks5h"}:
-            protocol = "http"
+        )
         user = (
             values.get(f"{prefix}_USER")
             or values.get(f"{prefix}_USERNAME")
@@ -92,14 +107,32 @@ def build_split_proxy(values: dict[str, str]) -> tuple[str, str]:
             or values.get("PROXY_PASS")
             or ""
         ).strip()
-        auth = ""
-        if user:
-            auth = quote(user, safe="")
-            if password:
-                auth += ":" + quote(password, safe="")
-            auth += "@"
+
         source_host = "ADDRESS" if values.get(f"{prefix}_ADDRESS") else "HOST" if values.get(f"{prefix}_HOST") else "IP"
-        return f"{protocol}://{auth}{host}:{port}", f"{prefix}_{source_host}+PORT"
+
+        # Some providers store the entire endpoint in PROXY_ADDRESS. Accept both
+        # scheme://host:port and host:port forms even when PROXY_PORT is blank.
+        if "://" in address:
+            parsed = urlsplit(address)
+            host = parsed.hostname or ""
+            effective_port = str(parsed.port or port or "")
+            effective_scheme = normalized_scheme(parsed.scheme or scheme)
+            embedded_user = parsed.username or ""
+            embedded_password = parsed.password or ""
+            if host and effective_port:
+                auth = proxy_auth(user or embedded_user, password or embedded_password)
+                return f"{effective_scheme}://{auth}{host}:{effective_port}", f"{prefix}_{source_host}_URL"
+
+        if not port and address.count(":") == 1:
+            candidate_host, candidate_port = address.rsplit(":", 1)
+            if candidate_host and candidate_port.isdigit():
+                address, port = candidate_host, candidate_port
+
+        if not port:
+            continue
+
+        auth = proxy_auth(user, password)
+        return f"{scheme}://{auth}{address}:{port}", f"{prefix}_{source_host}+PORT"
     return "", ""
 
 
@@ -120,13 +153,20 @@ def extract_openai_transport_configuration() -> dict[str, object]:
     atomic_write(OPENAI_DIR / "proxy_url", proxy + ("\n" if proxy else ""))
     atomic_write(OPENAI_DIR / "model", model + "\n")
 
+    candidate_keys = sorted(key for key in values if "PROXY" in key.upper() or "TUNNEL" in key.upper())[:30]
+    component_presence = {
+        key: bool((values.get(key) or "").strip())
+        for key in candidate_keys
+        if key.upper().endswith(("_ADDRESS", "_HOST", "_IP", "_PORT", "_SCHEME", "_TYPE", "_PROTOCOL", "_LOGIN", "_USER", "_USERNAME", "_PASSWORD", "_PASS"))
+    }
     status = {
         "apiKeySource": "bureau-nakhodok_openai_secret/openai_api_key",
         "proxyConfigured": bool(proxy),
         "proxySource": proxy_source or "missing",
         "modelConfigured": bool(model),
         "modelSource": model_source,
-        "candidateProxyKeys": sorted(key for key in values if "PROXY" in key.upper() or "TUNNEL" in key.upper())[:30],
+        "candidateProxyKeys": candidate_keys,
+        "proxyComponentPresence": component_presence,
     }
     atomic_write(SHARED_DIR / "openai_config_status.json", json.dumps(status, ensure_ascii=False, separators=(",", ":")) + "\n")
     return status
