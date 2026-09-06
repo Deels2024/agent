@@ -42,7 +42,12 @@ def parse_env_file(path: pathlib.Path) -> dict[str, str]:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
             value = value[1:-1]
         if key:
-            values[key] = value
+            # A common operational pattern is to append real values above/below
+            # placeholder KEY= lines. Never let a later empty duplicate erase an
+            # already configured secret/endpoint, while still allowing a later
+            # non-empty value to intentionally override an earlier one.
+            if value or not (values.get(key) or "").strip():
+                values[key] = value
     return values
 
 
