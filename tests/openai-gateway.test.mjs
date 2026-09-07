@@ -38,15 +38,14 @@ async function makeGatewayFixture() {
   const directory = await mkdtemp(join(tmpdir(), "agent-openai-gateway-fixture-"));
   const shared = join(directory, "shared");
   const openai = join(directory, "openai");
-  const keyFile = join(directory, "openai_api_key");
   await mkdir(shared, { recursive: true });
   await mkdir(openai, { recursive: true });
   await writeFile(join(shared, "openai_gateway_token"), "gateway-token\n");
-  await writeFile(join(shared, "openai_config_status.json"), JSON.stringify({ apiKeySource: "bureau-nakhodok_openai_secret/openai_api_key", proxySource: "missing", modelSource: "BN_OPENAI_MODEL" }));
+  await writeFile(join(shared, "openai_config_status.json"), JSON.stringify({ apiKeySource: "OPENAI_API_KEY", proxySource: "missing", modelSource: "BN_OPENAI_MODEL" }));
+  await writeFile(join(openai, "api_key"), "sk-test-key\n");
   await writeFile(join(openai, "proxy_url"), "");
   await writeFile(join(openai, "model"), "gpt-5.6\n");
-  await writeFile(keyFile, "sk-test-key\n");
-  return { directory, shared, openai, keyFile };
+  return { directory, shared, openai };
 }
 
 function gatewayEnv(fixture, extra = {}) {
@@ -55,7 +54,7 @@ function gatewayEnv(fixture, extra = {}) {
     ...clearedProxyEnv,
     RUNTIME_SHARED_DIR: fixture.shared,
     RUNTIME_OPENAI_DIR: fixture.openai,
-    OPENAI_API_KEY_FILE: fixture.keyFile,
+    OPENAI_API_KEY_FILE: join(fixture.openai, "api_key"),
     OPENAI_GATEWAY_TOKEN_FILE: join(fixture.shared, "openai_gateway_token"),
     OPENAI_CONFIG_STATUS_FILE: join(fixture.shared, "openai_config_status.json"),
     OPENAI_PROXY_URL_FILE: join(fixture.openai, "proxy_url"),
@@ -67,15 +66,18 @@ function gatewayEnv(fixture, extra = {}) {
   };
 }
 
-test("root initializer extracts only proxy and model, never the OpenAI API key", async () => {
-  const result = await extractTransport("OPENAI_API_KEY=must-not-be-copied\nOPENAI_PROXY_URL=http://user:pass@127.0.0.1:3128\n");
+test("root initializer copies server OpenAI key into private runtime without exposing it in status", async () => {
+  const result = await extractTransport("OPENAI_API_KEY=sk-test-env-key\nOPENAI_PROXY_URL=http://user:pass@127.0.0.1:3128\n");
   try {
+    assert.equal(result.status.apiKeyConfigured, true);
+    assert.equal(result.status.apiKeySource, "OPENAI_API_KEY");
     assert.equal(result.status.proxyConfigured, true);
     assert.equal(result.status.proxySource, "OPENAI_PROXY_URL");
-    assert.equal(result.status.apiKeySource, "bureau-nakhodok_openai_secret/openai_api_key");
-    await assert.rejects(readFile(join(result.openai, "api_key"), "utf8"));
+    assert.equal((await readFile(join(result.openai, "api_key"), "utf8")).trim(), "sk-test-env-key");
     assert.equal((await readFile(join(result.openai, "proxy_url"), "utf8")).trim(), "http://user:pass@127.0.0.1:3128");
     assert.equal((await readFile(join(result.openai, "model"), "utf8")).trim(), "gpt-5.6-luna");
+    assert.equal(JSON.stringify(result.status).includes("sk-test-env-key"), false);
+    assert.equal(JSON.stringify(result.status).includes("user:pass"), false);
   } finally {
     await rm(result.directory, { recursive: true, force: true });
   }
@@ -83,6 +85,7 @@ test("root initializer extracts only proxy and model, never the OpenAI API key",
 
 test("root initializer builds production proxy URL from PROXY_ADDRESS LOGIN PORT SCHEME PASSWORD", async () => {
   const result = await extractTransport([
+    "OPENAI_API_KEY=sk-test-env-key",
     "PROXY_ADDRESS=proxy.example.test",
     "PROXY_PORT=1080",
     "PROXY_SCHEME=socks5",
@@ -92,6 +95,7 @@ test("root initializer builds production proxy URL from PROXY_ADDRESS LOGIN PORT
     "",
   ].join("\n"));
   try {
+    assert.equal(result.status.apiKeyConfigured, true);
     assert.equal(result.status.proxyConfigured, true);
     assert.equal(result.status.proxySource, "PROXY_ADDRESS+PORT");
     assert.equal((await readFile(join(result.openai, "proxy_url"), "utf8")).trim(), "socks5h://user%40example.test:p%20a%3Ass@proxy.example.test:1080");
@@ -103,13 +107,9 @@ test("root initializer builds production proxy URL from PROXY_ADDRESS LOGIN PORT
   }
 });
 
-test("gateway reads the Buro-owned key directly while consuming Agent transport files", async () => {
-  const result = await extractTransport("OPENAI_PROXY_URL=http://127.0.0.1:3128\nBN_OPENAI_MODEL=gpt-5.6\n");
+test("gateway reads Agent private runtime key and transport files without exposing secret values", async () => {
+  const result = await extractTransport("OPENAI_API_KEY=sk-test-protected-key\nOPENAI_PROXY_URL=http://127.0.0.1:3128\nBN_OPENAI_MODEL=gpt-5.6\n");
   try {
-    const buroDir = join(result.directory, "bureau-openai");
-    const keyFile = join(buroDir, "openai_api_key");
-    await mkdir(buroDir, { recursive: true });
-    await writeFile(keyFile, "sk-test-protected-key\n", { mode: 0o400 });
     const code = `
 import importlib.util, json
 spec=importlib.util.spec_from_file_location("gateway", ${JSON.stringify(gatewayPath)})
@@ -122,7 +122,11 @@ print(json.dumps(m.local_status()))
         ...clearedProxyEnv,
         RUNTIME_SHARED_DIR: result.shared,
         RUNTIME_OPENAI_DIR: result.openai,
-        OPENAI_API_KEY_FILE: keyFile,
+        OPENAI_API_KEY_FILE: join(result.openai, "api_key"),
+        OPENAI_PROXY_URL_FILE: join(result.openai, "proxy_url"),
+        OPENAI_MODEL_FILE: join(result.openai, "model"),
+        OPENAI_GATEWAY_TOKEN_FILE: join(result.shared, "openai_gateway_token"),
+        OPENAI_CONFIG_STATUS_FILE: join(result.shared, "openai_config_status.json"),
         OPENAI_API_KEY: "",
         OPENAI_PROXY_URL: "",
         OPENAI_GATEWAY_TOKEN: "",
@@ -130,7 +134,7 @@ print(json.dumps(m.local_status()))
     });
     const status = JSON.parse(stdout.trim());
     assert.equal(status.apiKeyConfigured, true);
-    assert.equal(status.apiKeySource, "bureau-nakhodok_openai_secret/openai_api_key");
+    assert.equal(status.apiKeySource, "OPENAI_API_KEY");
     assert.equal(status.proxyConfigured, true);
     assert.equal(status.networkTransport, "explicit-proxy");
     assert.equal(status.gatewayTokenConfigured, true);
