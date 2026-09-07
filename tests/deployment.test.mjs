@@ -54,32 +54,32 @@ test("runtime Worker config receives protected environment without changing path
   }
 });
 
-test("root runtime initializer handles only proxy/model and shared internal tokens", () => {
+test("root runtime initializer extracts OpenAI key, proxy and model from server env", () => {
   const initSection = compose.match(/\n  runtime-init:[\s\S]*?\n  openai-gateway:/)?.[0] ?? "";
   assert.match(initSection, /\/opt\/bureau_nakhodok_suite\/\.env:\/run\/integration\/bureau\.env:ro/);
-  assert.doesNotMatch(initSection, /buro_openai_secret/);
-  assert.doesNotMatch(initSection, /openai_api_key/);
   assert.match(initSection, /runtime_shared:\/run\/shared/);
   assert.match(initSection, /runtime_openai:\/run\/openai/);
   assert.match(runtimeInitDockerfile, /openai_config_status\.json/);
+  assert.match(runtimeInit, /first\(values, "OPENAI_API_KEY", "BN_OPENAI_API_KEY"\)/);
+  assert.match(runtimeInit, /OPENAI_DIR \/ "api_key"/);
+  assert.match(runtimeInit, /apiKeyConfigured/);
+  assert.match(runtimeInit, /apiKeySource/);
   assert.match(runtimeInit, /extract_openai_transport_configuration/);
   assert.match(runtimeInit, /\{prefix\}_ADDRESS/);
   assert.match(runtimeInit, /\{prefix\}_LOGIN/);
   assert.match(runtimeInit, /openai_gateway_token/);
   assert.match(runtimeInit, /cron_secret/);
   assert.match(runtimeInit, /candidateProxyKeys/);
-  assert.doesNotMatch(runtimeInit, /read_secret/);
 });
 
-test("Buro OpenAI key volume is mounted only into same-UID non-root gateway", () => {
+test("OpenAI key and proxy are mounted only into non-root gateway via private runtime volume", () => {
   const gatewaySection = compose.match(/\n  openai-gateway:[\s\S]*?\n  app:/)?.[0] ?? "";
   const appSection = compose.match(/\n  app:[\s\S]*?\n  automation:/)?.[0] ?? "";
-  assert.match(gatewaySection, /buro_openai_secret:\/run\/bureau-openai:ro/);
-  assert.match(gatewaySection, /OPENAI_API_KEY_FILE: \/run\/bureau-openai\/openai_api_key/);
+  assert.match(gatewaySection, /OPENAI_API_KEY_FILE: \/run\/openai\/api_key/);
   assert.match(gatewaySection, /runtime_openai:\/run\/openai:ro/);
   assert.match(gatewaySection, /OPENAI_PROXY_URL_FILE: \/run\/openai\/proxy_url/);
-  assert.match(compose, /buro_openai_secret:\n\s+external: true\n\s+name: bureau-nakhodok_openai_secret/);
-  assert.doesNotMatch(appSection, /buro_openai_secret/);
+  assert.doesNotMatch(compose, /bureau-nakhodok_openai_secret/);
+  assert.doesNotMatch(compose, /buro_openai_secret/);
   assert.doesNotMatch(appSection, /runtime_openai/);
   assert.doesNotMatch(appSection, /OPENAI_API_KEY/);
   assert.doesNotMatch(appSection, /OPENAI_PROXY_URL/);
@@ -108,7 +108,6 @@ test("background automation reads only the shared cron secret", () => {
   assert.match(automationSection, /CRON_SECRET_FILE: \/run\/shared\/cron_secret/);
   assert.match(automationSection, /runtime_shared:\/run\/shared:ro/);
   assert.doesNotMatch(automationSection, /runtime_openai/);
-  assert.doesNotMatch(automationSection, /buro_openai_secret/);
   assert.match(automationDockerfile, /automation\.heartbeat/);
   assert.match(automationRunner, /\/api\/jobs\/price-alerts/);
 });

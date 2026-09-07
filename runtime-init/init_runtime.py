@@ -42,10 +42,9 @@ def parse_env_file(path: pathlib.Path) -> dict[str, str]:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
             value = value[1:-1]
         if key:
-            # A common operational pattern is to append real values above/below
-            # placeholder KEY= lines. Never let a later empty duplicate erase an
-            # already configured secret/endpoint, while still allowing a later
-            # non-empty value to intentionally override an earlier one.
+            # Preserve a configured value when operational files contain a later
+            # empty placeholder duplicate, while still allowing a later non-empty
+            # value to intentionally override an earlier one.
             if value or not (values.get(key) or "").strip():
                 values[key] = value
     return values
@@ -165,6 +164,8 @@ def safe_component_shape(key: str, value: str) -> str:
 
 def extract_openai_transport_configuration() -> dict[str, object]:
     values = parse_env_file(INTEGRATION_ENV)
+
+    api_key, api_key_source = first(values, "OPENAI_API_KEY", "BN_OPENAI_API_KEY")
     proxy, proxy_source = first(
         values,
         "OPENAI_PROXY_URL", "BN_OPENAI_PROXY_URL", "OPENAI_PROXY", "OPENAI_HTTPS_PROXY",
@@ -177,6 +178,9 @@ def extract_openai_transport_configuration() -> dict[str, object]:
     model = model or "gpt-5.6-luna"
     model_source = model_source or "default"
 
+    # Copy only the required OpenAI secret into a private runtime volume. The
+    # gateway mounts that volume read-only; the app container never receives it.
+    atomic_write(OPENAI_DIR / "api_key", api_key + ("\n" if api_key else ""))
     atomic_write(OPENAI_DIR / "proxy_url", proxy + ("\n" if proxy else ""))
     atomic_write(OPENAI_DIR / "model", model + "\n")
 
@@ -193,7 +197,8 @@ def extract_openai_transport_configuration() -> dict[str, object]:
         if key.upper().endswith(relevant_suffixes)
     }
     status = {
-        "apiKeySource": "bureau-nakhodok_openai_secret/openai_api_key",
+        "apiKeyConfigured": bool(api_key),
+        "apiKeySource": api_key_source or "missing",
         "proxyConfigured": bool(proxy),
         "proxySource": proxy_source or "missing",
         "modelConfigured": bool(model),
@@ -217,7 +222,8 @@ def main() -> int:
         status = extract_openai_transport_configuration()
     except Exception as exc:
         status = {
-            "apiKeySource": "bureau-nakhodok_openai_secret/openai_api_key",
+            "apiKeyConfigured": False,
+            "apiKeySource": "missing",
             "proxyConfigured": False,
             "modelConfigured": False,
             "extractorError": type(exc).__name__,
