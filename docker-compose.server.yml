@@ -11,7 +11,7 @@ services:
       AGENT_ENV_FILE: /run/integration/agent.env
       INTEGRATION_ENV_FILE: /run/integration/bureau.env
     volumes:
-      - ./.env:/run/integration/agent.env:ro
+      - /root/agent/.env:/run/integration/agent.env:ro
       - /opt/bureau_nakhodok_suite/.env:/run/integration/bureau.env:ro
       - runtime_shared:/run/shared
       - runtime_openai:/run/openai
