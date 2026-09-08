@@ -162,9 +162,21 @@ def safe_component_shape(key: str, value: str) -> str:
     return "set"
 
 
+def safe_agent_env_diagnostic(values: dict[str, str]) -> dict[str, object]:
+    names = ("OPENAI_API_KEY", "BN_OPENAI_API_KEY")
+    return {
+        "agentEnvPresent": AGENT_ENV.is_file(),
+        "agentEnvKeyPresence": {
+            name: bool((values.get(name) or "").strip())
+            for name in names
+        },
+    }
+
+
 def extract_openai_transport_configuration() -> dict[str, object]:
     agent_values = parse_env_file(AGENT_ENV)
     integration_values = parse_env_file(INTEGRATION_ENV)
+    agent_diagnostic = safe_agent_env_diagnostic(agent_values)
 
     api_key, api_key_source = first(agent_values, "OPENAI_API_KEY", "BN_OPENAI_API_KEY")
 
@@ -200,6 +212,7 @@ def extract_openai_transport_configuration() -> dict[str, object]:
         if key.upper().endswith(relevant_suffixes)
     }
     status = {
+        **agent_diagnostic,
         "apiKeyConfigured": bool(api_key),
         "apiKeySource": f"agent-env:{api_key_source}" if api_key_source else "missing",
         "proxyConfigured": bool(proxy),
@@ -225,6 +238,11 @@ def main() -> int:
         status = extract_openai_transport_configuration()
     except Exception as exc:
         status = {
+            "agentEnvPresent": AGENT_ENV.is_file(),
+            "agentEnvKeyPresence": {
+                "OPENAI_API_KEY": False,
+                "BN_OPENAI_API_KEY": False,
+            },
             "apiKeyConfigured": False,
             "apiKeySource": "missing",
             "proxyConfigured": False,

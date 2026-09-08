@@ -54,10 +54,11 @@ test("runtime Worker config receives protected environment without changing path
   }
 });
 
-test("runtime initializer reads Agent key from Agent env and proxy from Buro env", () => {
+test("runtime initializer reads Agent key from absolute Agent env and proxy from Buro env", () => {
   const initSection = compose.match(/\n  runtime-init:[\s\S]*?\n  openai-gateway:/)?.[0] ?? "";
   assert.match(initSection, /AGENT_ENV_FILE: \/run\/integration\/agent\.env/);
-  assert.match(initSection, /\.\/\.env:\/run\/integration\/agent\.env:ro/);
+  assert.match(initSection, /\/root\/agent\/\.env:\/run\/integration\/agent\.env:ro/);
+  assert.doesNotMatch(initSection, /\.\/\.env:\/run\/integration\/agent\.env:ro/);
   assert.match(initSection, /INTEGRATION_ENV_FILE: \/run\/integration\/bureau\.env/);
   assert.match(initSection, /\/opt\/bureau_nakhodok_suite\/\.env:\/run\/integration\/bureau\.env:ro/);
   assert.match(initSection, /runtime_shared:\/run\/shared/);
@@ -70,6 +71,8 @@ test("runtime initializer reads Agent key from Agent env and proxy from Buro env
   assert.match(runtimeInit, /build_split_proxy\(integration_values\)/);
   assert.match(runtimeInit, /OPENAI_DIR \/ "api_key"/);
   assert.match(runtimeInit, /agent-env:/);
+  assert.match(runtimeInit, /agentEnvPresent/);
+  assert.match(runtimeInit, /agentEnvKeyPresence/);
   assert.match(runtimeInit, /openai_gateway_token/);
   assert.match(runtimeInit, /cron_secret/);
 });
