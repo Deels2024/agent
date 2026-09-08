@@ -10,14 +10,19 @@ import test from "node:test";
 const execFileAsync = promisify(execFile);
 const initPath = fileURLToPath(new URL("../runtime-init/init_runtime.py", import.meta.url));
 
-test("runtime initializer copies OPENAI_API_KEY from mounted env into private OpenAI volume", async () => {
+test("runtime initializer copies Agent OPENAI_API_KEY and Buro proxy into private OpenAI volume", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agent-openai-key-runtime-"));
   const shared = join(directory, "shared");
   const openai = join(directory, "openai");
-  const envFile = join(directory, "bureau.env");
+  const agentEnv = join(directory, "agent.env");
+  const bureauEnv = join(directory, "bureau.env");
   try {
-    await writeFile(envFile, [
+    await writeFile(agentEnv, [
       "OPENAI_API_KEY=fake-project-key",
+      "OPENAI_VISION_MODEL=gpt-5.6-luna",
+      "",
+    ].join("\n"));
+    await writeFile(bureauEnv, [
       "PROXY_ADDRESS=proxy.example.test",
       "PROXY_PORT=3128",
       "PROXY_LOGIN=test-user",
@@ -26,7 +31,7 @@ test("runtime initializer copies OPENAI_API_KEY from mounted env into private Op
       "",
     ].join("\n"));
     const code = `
-import importlib.util, json, pathlib, os
+import importlib.util, json
 spec = importlib.util.spec_from_file_location("runtime_init", ${JSON.stringify(initPath)})
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -40,12 +45,13 @@ print(json.dumps(status))
         ...process.env,
         RUNTIME_SHARED_DIR: shared,
         RUNTIME_OPENAI_DIR: openai,
-        INTEGRATION_ENV_FILE: envFile,
+        AGENT_ENV_FILE: agentEnv,
+        INTEGRATION_ENV_FILE: bureauEnv,
       },
     });
     const status = JSON.parse(stdout.trim());
     assert.equal(status.apiKeyConfigured, true);
-    assert.equal(status.apiKeySource, "OPENAI_API_KEY");
+    assert.equal(status.apiKeySource, "agent-env:OPENAI_API_KEY");
     assert.equal(status.proxyConfigured, true);
     assert.equal((await readFile(join(openai, "api_key"), "utf8")).trim(), "fake-project-key");
     assert.equal((await readFile(join(openai, "proxy_url"), "utf8")).includes("proxy.example.test"), true);
