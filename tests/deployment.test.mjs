@@ -54,22 +54,24 @@ test("runtime Worker config receives protected environment without changing path
   }
 });
 
-test("root runtime initializer extracts OpenAI key, proxy and model from server env", () => {
+test("runtime initializer reads Agent key from Agent env and proxy from Buro env", () => {
   const initSection = compose.match(/\n  runtime-init:[\s\S]*?\n  openai-gateway:/)?.[0] ?? "";
+  assert.match(initSection, /AGENT_ENV_FILE: \/run\/integration\/agent\.env/);
+  assert.match(initSection, /\.\/\.env:\/run\/integration\/agent\.env:ro/);
+  assert.match(initSection, /INTEGRATION_ENV_FILE: \/run\/integration\/bureau\.env/);
   assert.match(initSection, /\/opt\/bureau_nakhodok_suite\/\.env:\/run\/integration\/bureau\.env:ro/);
   assert.match(initSection, /runtime_shared:\/run\/shared/);
   assert.match(initSection, /runtime_openai:\/run\/openai/);
   assert.match(runtimeInitDockerfile, /openai_config_status\.json/);
-  assert.match(runtimeInit, /first\(values, "OPENAI_API_KEY", "BN_OPENAI_API_KEY"\)/);
+  assert.match(runtimeInit, /AGENT_ENV/);
+  assert.match(runtimeInit, /agent_values = parse_env_file\(AGENT_ENV\)/);
+  assert.match(runtimeInit, /integration_values = parse_env_file\(INTEGRATION_ENV\)/);
+  assert.match(runtimeInit, /first\(agent_values, "OPENAI_API_KEY", "BN_OPENAI_API_KEY"\)/);
+  assert.match(runtimeInit, /build_split_proxy\(integration_values\)/);
   assert.match(runtimeInit, /OPENAI_DIR \/ "api_key"/);
-  assert.match(runtimeInit, /apiKeyConfigured/);
-  assert.match(runtimeInit, /apiKeySource/);
-  assert.match(runtimeInit, /extract_openai_transport_configuration/);
-  assert.match(runtimeInit, /\{prefix\}_ADDRESS/);
-  assert.match(runtimeInit, /\{prefix\}_LOGIN/);
+  assert.match(runtimeInit, /agent-env:/);
   assert.match(runtimeInit, /openai_gateway_token/);
   assert.match(runtimeInit, /cron_secret/);
-  assert.match(runtimeInit, /candidateProxyKeys/);
 });
 
 test("OpenAI key and proxy are mounted only into non-root gateway via private runtime volume", () => {
@@ -78,8 +80,6 @@ test("OpenAI key and proxy are mounted only into non-root gateway via private ru
   assert.match(gatewaySection, /OPENAI_API_KEY_FILE: \/run\/openai\/api_key/);
   assert.match(gatewaySection, /runtime_openai:\/run\/openai:ro/);
   assert.match(gatewaySection, /OPENAI_PROXY_URL_FILE: \/run\/openai\/proxy_url/);
-  assert.doesNotMatch(compose, /bureau-nakhodok_openai_secret/);
-  assert.doesNotMatch(compose, /buro_openai_secret/);
   assert.doesNotMatch(appSection, /runtime_openai/);
   assert.doesNotMatch(appSection, /OPENAI_API_KEY/);
   assert.doesNotMatch(appSection, /OPENAI_PROXY_URL/);
