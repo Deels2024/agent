@@ -8,6 +8,7 @@ from urllib.parse import quote, urlsplit
 
 SHARED_DIR = pathlib.Path(os.environ.get("RUNTIME_SHARED_DIR") or "/run/shared")
 OPENAI_DIR = pathlib.Path(os.environ.get("RUNTIME_OPENAI_DIR") or "/run/openai")
+AGENT_ENV = pathlib.Path(os.environ.get("AGENT_ENV_FILE") or "/run/integration/agent.env")
 INTEGRATION_ENV = pathlib.Path(os.environ.get("INTEGRATION_ENV_FILE") or "/run/integration/bureau.env")
 
 
@@ -28,6 +29,8 @@ def ensure_secret(directory: pathlib.Path, name: str, length_bytes: int = 32) ->
 
 def parse_env_file(path: pathlib.Path) -> dict[str, str]:
     values: dict[str, str] = {}
+    if not path.is_file():
+        return values
     for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -42,9 +45,6 @@ def parse_env_file(path: pathlib.Path) -> dict[str, str]:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
             value = value[1:-1]
         if key:
-            # Preserve a configured value when operational files contain a later
-            # empty placeholder duplicate, while still allowing a later non-empty
-            # value to intentionally override an earlier one.
             if value or not (values.get(key) or "").strip():
                 values[key] = value
     return values
@@ -163,46 +163,49 @@ def safe_component_shape(key: str, value: str) -> str:
 
 
 def extract_openai_transport_configuration() -> dict[str, object]:
-    values = parse_env_file(INTEGRATION_ENV)
+    agent_values = parse_env_file(AGENT_ENV)
+    integration_values = parse_env_file(INTEGRATION_ENV)
 
-    api_key, api_key_source = first(values, "OPENAI_API_KEY", "BN_OPENAI_API_KEY")
+    api_key, api_key_source = first(agent_values, "OPENAI_API_KEY", "BN_OPENAI_API_KEY")
+
     proxy, proxy_source = first(
-        values,
+        integration_values,
         "OPENAI_PROXY_URL", "BN_OPENAI_PROXY_URL", "OPENAI_PROXY", "OPENAI_HTTPS_PROXY",
         "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy",
         "PROXY_URL", "PROXY", "OUTBOUND_PROXY_URL", "OUTBOUND_PROXY",
     )
     if not proxy:
-        proxy, proxy_source = build_split_proxy(values)
-    model, model_source = first(values, "OPENAI_VISION_MODEL", "BN_OPENAI_MODEL")
+        proxy, proxy_source = build_split_proxy(integration_values)
+
+    model, model_source = first(agent_values, "OPENAI_VISION_MODEL")
+    if not model:
+        model, model_source = first(integration_values, "BN_OPENAI_MODEL")
     model = model or "gpt-5.6-luna"
     model_source = model_source or "default"
 
-    # Copy only the required OpenAI secret into a private runtime volume. The
-    # gateway mounts that volume read-only; the app container never receives it.
     atomic_write(OPENAI_DIR / "api_key", api_key + ("\n" if api_key else ""))
     atomic_write(OPENAI_DIR / "proxy_url", proxy + ("\n" if proxy else ""))
     atomic_write(OPENAI_DIR / "model", model + "\n")
 
-    candidate_keys = sorted(key for key in values if "PROXY" in key.upper() or "TUNNEL" in key.upper())[:30]
+    candidate_keys = sorted(key for key in integration_values if "PROXY" in key.upper() or "TUNNEL" in key.upper())[:30]
     relevant_suffixes = ("_ADDRESS", "_HOST", "_IP", "_PORT", "_SCHEME", "_TYPE", "_PROTOCOL", "_LOGIN", "_USER", "_USERNAME", "_PASSWORD", "_PASS")
     component_presence = {
-        key: bool((values.get(key) or "").strip())
+        key: bool((integration_values.get(key) or "").strip())
         for key in candidate_keys
         if key.upper().endswith(relevant_suffixes)
     }
     component_shapes = {
-        key: safe_component_shape(key, values.get(key) or "")
+        key: safe_component_shape(key, integration_values.get(key) or "")
         for key in candidate_keys
         if key.upper().endswith(relevant_suffixes)
     }
     status = {
         "apiKeyConfigured": bool(api_key),
-        "apiKeySource": api_key_source or "missing",
+        "apiKeySource": f"agent-env:{api_key_source}" if api_key_source else "missing",
         "proxyConfigured": bool(proxy),
         "proxySource": proxy_source or "missing",
         "modelConfigured": bool(model),
-        "modelSource": model_source,
+        "modelSource": f"agent-env:{model_source}" if model_source == "OPENAI_VISION_MODEL" else model_source,
         "candidateProxyKeys": candidate_keys,
         "proxyComponentPresence": component_presence,
         "proxyComponentShapes": component_shapes,

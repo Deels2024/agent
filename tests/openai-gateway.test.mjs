@@ -14,12 +14,14 @@ const clearedProxyEnv = {
   HTTPS_PROXY: "", https_proxy: "", ALL_PROXY: "", all_proxy: "", HTTP_PROXY: "", http_proxy: "",
 };
 
-async function extractTransport(contents) {
+async function extractTransport(integrationContents, agentContents = "OPENAI_API_KEY=sk-test-env-key\n") {
   const directory = await mkdtemp(join(tmpdir(), "agent-openai-transport-"));
   const shared = join(directory, "shared");
   const openai = join(directory, "openai");
-  const envFile = join(directory, "bureau.env");
-  await writeFile(envFile, contents);
+  const integrationEnvFile = join(directory, "bureau.env");
+  const agentEnvFile = join(directory, "agent.env");
+  await writeFile(integrationEnvFile, integrationContents);
+  await writeFile(agentEnvFile, agentContents);
   const code = `
 import importlib.util, json
 spec=importlib.util.spec_from_file_location("init_runtime", ${JSON.stringify(initPath)})
@@ -29,7 +31,13 @@ m.ensure_secret(m.SHARED_DIR,"openai_gateway_token"); m.ensure_secret(m.SHARED_D
 print(json.dumps(m.extract_openai_transport_configuration()))
 `;
   const { stdout } = await execFileAsync("python3", ["-c", code], {
-    env: { ...process.env, RUNTIME_SHARED_DIR: shared, RUNTIME_OPENAI_DIR: openai, INTEGRATION_ENV_FILE: envFile },
+    env: {
+      ...process.env,
+      RUNTIME_SHARED_DIR: shared,
+      RUNTIME_OPENAI_DIR: openai,
+      AGENT_ENV_FILE: agentEnvFile,
+      INTEGRATION_ENV_FILE: integrationEnvFile,
+    },
   });
   return { directory, shared, openai, status: JSON.parse(stdout.trim()) };
 }
@@ -41,7 +49,7 @@ async function makeGatewayFixture() {
   await mkdir(shared, { recursive: true });
   await mkdir(openai, { recursive: true });
   await writeFile(join(shared, "openai_gateway_token"), "gateway-token\n");
-  await writeFile(join(shared, "openai_config_status.json"), JSON.stringify({ apiKeySource: "OPENAI_API_KEY", proxySource: "missing", modelSource: "BN_OPENAI_MODEL" }));
+  await writeFile(join(shared, "openai_config_status.json"), JSON.stringify({ apiKeySource: "agent-env:OPENAI_API_KEY", proxySource: "missing", modelSource: "BN_OPENAI_MODEL" }));
   await writeFile(join(openai, "api_key"), "sk-test-key\n");
   await writeFile(join(openai, "proxy_url"), "");
   await writeFile(join(openai, "model"), "gpt-5.6\n");
@@ -66,17 +74,21 @@ function gatewayEnv(fixture, extra = {}) {
   };
 }
 
-test("root initializer copies server OpenAI key into private runtime without exposing it in status", async () => {
-  const result = await extractTransport("OPENAI_API_KEY=sk-test-env-key\nOPENAI_PROXY_URL=http://user:pass@127.0.0.1:3128\n");
+test("root initializer copies Agent OpenAI key and Buro proxy into private runtime without exposing either", async () => {
+  const result = await extractTransport(
+    "OPENAI_API_KEY=must-be-ignored\nOPENAI_PROXY_URL=http://user:pass@127.0.0.1:3128\n",
+    "OPENAI_API_KEY=sk-test-agent-key\n",
+  );
   try {
     assert.equal(result.status.apiKeyConfigured, true);
-    assert.equal(result.status.apiKeySource, "OPENAI_API_KEY");
+    assert.equal(result.status.apiKeySource, "agent-env:OPENAI_API_KEY");
     assert.equal(result.status.proxyConfigured, true);
     assert.equal(result.status.proxySource, "OPENAI_PROXY_URL");
-    assert.equal((await readFile(join(result.openai, "api_key"), "utf8")).trim(), "sk-test-env-key");
+    assert.equal((await readFile(join(result.openai, "api_key"), "utf8")).trim(), "sk-test-agent-key");
     assert.equal((await readFile(join(result.openai, "proxy_url"), "utf8")).trim(), "http://user:pass@127.0.0.1:3128");
     assert.equal((await readFile(join(result.openai, "model"), "utf8")).trim(), "gpt-5.6-luna");
-    assert.equal(JSON.stringify(result.status).includes("sk-test-env-key"), false);
+    assert.equal(JSON.stringify(result.status).includes("sk-test-agent-key"), false);
+    assert.equal(JSON.stringify(result.status).includes("must-be-ignored"), false);
     assert.equal(JSON.stringify(result.status).includes("user:pass"), false);
   } finally {
     await rm(result.directory, { recursive: true, force: true });
@@ -85,7 +97,6 @@ test("root initializer copies server OpenAI key into private runtime without exp
 
 test("root initializer builds production proxy URL from PROXY_ADDRESS LOGIN PORT SCHEME PASSWORD", async () => {
   const result = await extractTransport([
-    "OPENAI_API_KEY=sk-test-env-key",
     "PROXY_ADDRESS=proxy.example.test",
     "PROXY_PORT=1080",
     "PROXY_SCHEME=socks5",
@@ -96,6 +107,7 @@ test("root initializer builds production proxy URL from PROXY_ADDRESS LOGIN PORT
   ].join("\n"));
   try {
     assert.equal(result.status.apiKeyConfigured, true);
+    assert.equal(result.status.apiKeySource, "agent-env:OPENAI_API_KEY");
     assert.equal(result.status.proxyConfigured, true);
     assert.equal(result.status.proxySource, "PROXY_ADDRESS+PORT");
     assert.equal((await readFile(join(result.openai, "proxy_url"), "utf8")).trim(), "socks5h://user%40example.test:p%20a%3Ass@proxy.example.test:1080");
@@ -108,7 +120,10 @@ test("root initializer builds production proxy URL from PROXY_ADDRESS LOGIN PORT
 });
 
 test("gateway reads Agent private runtime key and transport files without exposing secret values", async () => {
-  const result = await extractTransport("OPENAI_API_KEY=sk-test-protected-key\nOPENAI_PROXY_URL=http://127.0.0.1:3128\nBN_OPENAI_MODEL=gpt-5.6\n");
+  const result = await extractTransport(
+    "OPENAI_PROXY_URL=http://127.0.0.1:3128\nBN_OPENAI_MODEL=gpt-5.6\n",
+    "OPENAI_API_KEY=sk-test-protected-key\n",
+  );
   try {
     const code = `
 import importlib.util, json
@@ -134,7 +149,7 @@ print(json.dumps(m.local_status()))
     });
     const status = JSON.parse(stdout.trim());
     assert.equal(status.apiKeyConfigured, true);
-    assert.equal(status.apiKeySource, "OPENAI_API_KEY");
+    assert.equal(status.apiKeySource, "agent-env:OPENAI_API_KEY");
     assert.equal(status.proxyConfigured, true);
     assert.equal(status.networkTransport, "explicit-proxy");
     assert.equal(status.gatewayTokenConfigured, true);

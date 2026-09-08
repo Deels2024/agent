@@ -8,8 +8,10 @@ services:
     environment:
       RUNTIME_SHARED_DIR: /run/shared
       RUNTIME_OPENAI_DIR: /run/openai
+      AGENT_ENV_FILE: /run/integration/agent.env
       INTEGRATION_ENV_FILE: /run/integration/bureau.env
     volumes:
+      - ./.env:/run/integration/agent.env:ro
       - /opt/bureau_nakhodok_suite/.env:/run/integration/bureau.env:ro
       - runtime_shared:/run/shared
       - runtime_openai:/run/openai
