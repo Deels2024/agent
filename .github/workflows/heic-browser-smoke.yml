@@ -10,60 +10,68 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
-      - name: Install Chromium smoke dependencies
+      - name: Install Chromium and HEIC converter
         run: |
           mkdir -p /tmp/heic-smoke && cd /tmp/heic-smoke
           npm init -y >/dev/null 2>&1
-          npm install playwright@1.55.0 --ignore-scripts >/dev/null
+          npm install playwright@1.55.0 heic-to@1.5.2 --ignore-scripts >/dev/null
           npx playwright install chromium >/dev/null
           curl --fail --location --silent --show-error \
             https://raw.githubusercontent.com/strukturag/libheif/master/examples/example.heic \
             -o example.heic
-      - name: Upload real HEIC through production UI
+          cat > standalone.html <<'HTML'
+          <!doctype html><html><body><div id="status">start</div><script type="module">
+          import { heicTo } from '/node_modules/heic-to/dist/csp/heic-to.js';
+          try {
+            const source = await fetch('/example.heic').then(r => r.blob());
+            const converted = await heicTo({ blob: source, type: 'image/jpeg', quality: 0.8 });
+            document.querySelector('#status').textContent = `ok:${converted.type}:${converted.size}`;
+          } catch (error) {
+            document.querySelector('#status').textContent = `error:${error?.name}:${error?.message}`;
+          }
+          </script></body></html>
+          HTML
+      - name: Test converter standalone then production UI
         run: |
           cd /tmp/heic-smoke
+          python3 -m http.server 4173 >/tmp/heic-http.log 2>&1 &
           cat > smoke.mjs <<'JS'
           import { chromium } from 'playwright';
-          import fs from 'node:fs';
-          const base = 'http://5.183.191.139:8788';
-          if (!fs.existsSync('example.heic') || fs.statSync('example.heic').size < 1000) throw new Error('HEIC fixture unavailable');
           const browser = await chromium.launch({ headless: true });
-          let last = '';
           try {
-            for (let attempt = 1; attempt <= 10; attempt++) {
-              const page = await browser.newPage();
-              let recognizeStatus = null;
-              page.on('response', (response) => {
-                if (response.url().includes('/api/recognize')) recognizeStatus = response.status();
-              });
-              try {
-                await page.goto(`${base}/live-search`, { waitUntil: 'networkidle', timeout: 30000 });
-                await page.getByRole('button', { name: 'По фото' }).click();
-                const input = page.locator('input[type="file"]');
-                await input.setInputFiles('example.heic');
-                await page.waitForFunction(() => {
-                  const text = document.body.innerText;
-                  return text.includes('Мы правильно определили товар?') || text.includes('Не получилось выполнить действие');
-                }, null, { timeout: 110000 });
-                last = (await page.locator('body').innerText()).slice(0, 3000);
-                if (recognizeStatus !== null) {
-                  console.log(`HEIC UI POST /api/recognize status=${recognizeStatus}`);
-                  console.log(last.replace(/\s+/g, ' ').slice(0, 800));
-                  if (last.includes('Не удалось преобразовать HEIC/HEIF')) throw new Error('HEIC conversion failed in Chromium');
-                  if (![200, 422, 502, 504].includes(recognizeStatus)) throw new Error(`Unexpected recognition status ${recognizeStatus}`);
-                  process.exitCode = 0;
-                  break;
-                }
-              } catch (error) {
-                last = `${error?.name || 'Error'}: ${error?.message || error}`;
-              } finally {
-                await page.close();
+            const standalone = await browser.newPage();
+            await standalone.goto('http://127.0.0.1:4173/standalone.html', { waitUntil: 'networkidle' });
+            await standalone.waitForFunction(() => !document.querySelector('#status').textContent.startsWith('start'), null, { timeout: 90000 });
+            const standaloneStatus = await standalone.locator('#status').innerText();
+            console.log(`STANDALONE ${standaloneStatus}`);
+            await standalone.close();
+
+            const page = await browser.newPage();
+            const network = [];
+            page.on('console', msg => console.log(`CONSOLE ${msg.type()} ${msg.text()}`));
+            page.on('pageerror', error => console.log(`PAGEERROR ${error.name}: ${error.message}`));
+            page.on('requestfailed', request => console.log(`REQUESTFAILED ${request.url()} ${request.failure()?.errorText || ''}`));
+            page.on('response', response => {
+              if (response.status() >= 400 || response.url().includes('heic') || response.url().includes('/api/recognize')) {
+                network.push(`${response.status()} ${response.url()}`);
               }
-              if (attempt === 10) throw new Error(`No HEIC recognition request observed. Last: ${last}`);
-              await new Promise((resolve) => setTimeout(resolve, 30000));
-            }
+            });
+            await page.goto('http://5.183.191.139:8788/live-search', { waitUntil: 'networkidle', timeout: 30000 });
+            await page.getByRole('button', { name: 'По фото' }).click();
+            await page.locator('input[type="file"]').setInputFiles('example.heic');
+            await page.waitForFunction(() => {
+              const text = document.body.innerText;
+              return text.includes('Мы правильно определили товар?') || text.includes('Не получилось выполнить действие');
+            }, null, { timeout: 110000 });
+            const body = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
+            console.log(`PRODUCTION_BODY ${body.slice(0, 1000)}`);
+            console.log(`NETWORK ${network.join(' | ')}`);
+            const recognitionResponse = network.find(item => item.includes('/api/recognize')) || '';
+            if (!recognitionResponse) throw new Error('Production UI never posted HEIC-converted image');
+            if (body.includes('Не удалось преобразовать HEIC/HEIF')) throw new Error('Production HEIC conversion failed');
+            await page.close();
           } finally {
             await browser.close();
           }
