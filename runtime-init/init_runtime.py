@@ -190,8 +190,6 @@ def extract_openai_transport_configuration() -> dict[str, object]:
         proxy, proxy_source = build_split_proxy(integration_values)
 
     model, model_source = first(agent_values, "OPENAI_VISION_MODEL")
-    if not model:
-        model, model_source = first(integration_values, "BN_OPENAI_MODEL")
     model = model or "gpt-5.6-luna"
     model_source = model_source or "default"
 

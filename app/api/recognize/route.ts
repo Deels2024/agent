@@ -51,12 +51,13 @@ export async function POST(request: Request) {
 
   const response = await openAIResponses({
     model: runtimeValue("OPENAI_VISION_MODEL") || "gpt-5.6-luna",
-    max_output_tokens: 350,
+    reasoning: { effort: "none" },
+    max_output_tokens: 220,
     input: [{
       role: "user",
       content: [
         { type: "input_text", text: "Определи товар на фото для поиска цен. Верни только JSON без markdown: {\"productName\":\"точное название на русском\",\"brand\":\"бренд или пусто\",\"model\":\"модель или пусто\",\"barcode\":\"видимый штрих-код или пусто\",\"confidence\":0.0}. Не выдумывай невидимые модель и штрих-код." },
-        { type: "input_image", image_url: imageDataUrl, detail: "auto" },
+        { type: "input_image", image_url: imageDataUrl, detail: "low" },
       ],
     }],
   });

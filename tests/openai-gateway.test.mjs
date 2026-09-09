@@ -49,7 +49,7 @@ async function makeGatewayFixture() {
   await mkdir(shared, { recursive: true });
   await mkdir(openai, { recursive: true });
   await writeFile(join(shared, "openai_gateway_token"), "gateway-token\n");
-  await writeFile(join(shared, "openai_config_status.json"), JSON.stringify({ apiKeySource: "agent-env:OPENAI_API_KEY", proxySource: "missing", modelSource: "BN_OPENAI_MODEL" }));
+  await writeFile(join(shared, "openai_config_status.json"), JSON.stringify({ apiKeySource: "agent-env:OPENAI_API_KEY", proxySource: "missing", modelSource: "default" }));
   await writeFile(join(openai, "api_key"), "sk-test-key\n");
   await writeFile(join(openai, "proxy_url"), "");
   await writeFile(join(openai, "model"), "gpt-5.6\n");
@@ -111,7 +111,8 @@ test("root initializer builds production proxy URL from PROXY_ADDRESS LOGIN PORT
     assert.equal(result.status.proxyConfigured, true);
     assert.equal(result.status.proxySource, "PROXY_ADDRESS+PORT");
     assert.equal((await readFile(join(result.openai, "proxy_url"), "utf8")).trim(), "socks5h://user%40example.test:p%20a%3Ass@proxy.example.test:1080");
-    assert.equal((await readFile(join(result.openai, "model"), "utf8")).trim(), "gpt-5.6");
+    assert.equal((await readFile(join(result.openai, "model"), "utf8")).trim(), "gpt-5.6-luna");
+    assert.equal(result.status.modelSource, "default");
     assert.ok(result.status.candidateProxyKeys.includes("PROXY_ADDRESS"));
     assert.ok(result.status.candidateProxyKeys.includes("PROXY_LOGIN"));
   } finally {
@@ -227,4 +228,32 @@ print(json.dumps({"status":status,"httpStatus":http_status,"args":captured["args
   } finally {
     await rm(fixture.directory, { recursive: true, force: true });
   }
+});
+
+
+test("Agent vision model never falls back to Buro BN_OPENAI_MODEL", async () => {
+  const result = await extractTransport("BN_OPENAI_MODEL=gpt-5.6-sol\nPROXY_ADDRESS=proxy.example.test\nPROXY_PORT=3128\n");
+  try {
+    assert.equal((await readFile(join(result.openai, "model"), "utf8")).trim(), "gpt-5.6-luna");
+    assert.equal(result.status.modelSource, "default");
+  } finally {
+    await rm(result.directory, { recursive: true, force: true });
+  }
+});
+
+test("gateway exposes only allowlisted transport error codes", async () => {
+  const code = `
+import importlib.util, json
+spec=importlib.util.spec_from_file_location("gateway", ${JSON.stringify(gatewayPath)})
+m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print(json.dumps({
+  "timeout": m.safe_transport_error_code(RuntimeError("proxy_timeout")),
+  "unknown": m.safe_transport_error_code(RuntimeError("secret-proxy-value")),
+}))
+`;
+  const { stdout } = await execFileAsync("python3", ["-c", code], { env: { ...process.env, ...clearedProxyEnv } });
+  const result = JSON.parse(stdout.trim());
+  assert.equal(result.timeout, "proxy_timeout");
+  assert.equal(result.unknown, "gateway_transport_error");
+  assert.equal(JSON.stringify(result).includes("secret-proxy-value"), false);
 });

@@ -148,6 +148,18 @@ def curl_request(method: str, path: str, body: bytes | None = None, timeout_seco
     return status, payload
 
 
+SAFE_TRANSPORT_ERROR_CODES = {
+    "proxy_timeout", "proxy_dns_error", "proxy_connection_error", "proxy_transport_error",
+    "direct_timeout", "direct_dns_error", "direct_connection_error", "direct_transport_error",
+    "invalid_upstream_status",
+}
+
+
+def safe_transport_error_code(exc: Exception) -> str:
+    code = str(exc).strip()
+    return code if code in SAFE_TRANSPORT_ERROR_CODES else "gateway_transport_error"
+
+
 def set_state(payload: dict[str, object]) -> None:
     with STATE_LOCK:
         UPSTREAM_STATE.clear()
@@ -194,7 +206,7 @@ def readiness_payload() -> dict[str, object]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "BuyerAgentOpenAIGateway/1.7"
+    server_version = "BuyerAgentOpenAIGateway/1.8"
 
     def log_message(self, fmt, *args):
         sys.stdout.write("openai-gateway " + (fmt % args) + "\n")
@@ -249,9 +261,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             status, payload = curl_request("POST", "/v1/responses", body=body)
-        except Exception:
+        except Exception as exc:
             start_probe_if_needed(True)
-            self._json(502, {"error": "openai_upstream_unavailable"})
+            code = safe_transport_error_code(exc)
+            response_status = 504 if code.endswith("_timeout") else 502
+            self._json(response_status, {"error": {"type": "gateway_transport_error", "code": code}})
             return
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
