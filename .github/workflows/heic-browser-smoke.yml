@@ -1,0 +1,71 @@
+name: HEIC browser smoke
+
+on:
+  push:
+    branches: [codex/photo-heic-browser-smoke]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install Chromium smoke dependencies
+        run: |
+          mkdir -p /tmp/heic-smoke && cd /tmp/heic-smoke
+          npm init -y >/dev/null 2>&1
+          npm install playwright@1.55.0 --ignore-scripts >/dev/null
+          npx playwright install chromium >/dev/null
+          curl --fail --location --silent --show-error \
+            https://raw.githubusercontent.com/strukturag/libheif/master/examples/example.heic \
+            -o example.heic
+      - name: Upload real HEIC through production UI
+        run: |
+          cd /tmp/heic-smoke
+          cat > smoke.mjs <<'JS'
+          import { chromium } from 'playwright';
+          import fs from 'node:fs';
+          const base = 'http://5.183.191.139:8788';
+          if (!fs.existsSync('example.heic') || fs.statSync('example.heic').size < 1000) throw new Error('HEIC fixture unavailable');
+          const browser = await chromium.launch({ headless: true });
+          let last = '';
+          try {
+            for (let attempt = 1; attempt <= 10; attempt++) {
+              const page = await browser.newPage();
+              let recognizeStatus = null;
+              page.on('response', (response) => {
+                if (response.url().includes('/api/recognize')) recognizeStatus = response.status();
+              });
+              try {
+                await page.goto(`${base}/live-search`, { waitUntil: 'networkidle', timeout: 30000 });
+                await page.getByRole('button', { name: 'По фото' }).click();
+                const input = page.locator('input[type="file"]');
+                await input.setInputFiles('example.heic');
+                await page.waitForFunction(() => {
+                  const text = document.body.innerText;
+                  return text.includes('Мы правильно определили товар?') || text.includes('Не получилось выполнить действие');
+                }, null, { timeout: 110000 });
+                last = (await page.locator('body').innerText()).slice(0, 3000);
+                if (recognizeStatus !== null) {
+                  console.log(`HEIC UI POST /api/recognize status=${recognizeStatus}`);
+                  console.log(last.replace(/\s+/g, ' ').slice(0, 800));
+                  if (last.includes('Не удалось преобразовать HEIC/HEIF')) throw new Error('HEIC conversion failed in Chromium');
+                  if (![200, 422, 502, 504].includes(recognizeStatus)) throw new Error(`Unexpected recognition status ${recognizeStatus}`);
+                  process.exitCode = 0;
+                  break;
+                }
+              } catch (error) {
+                last = `${error?.name || 'Error'}: ${error?.message || error}`;
+              } finally {
+                await page.close();
+              }
+              if (attempt === 10) throw new Error(`No HEIC recognition request observed. Last: ${last}`);
+              await new Promise((resolve) => setTimeout(resolve, 30000));
+            }
+          } finally {
+            await browser.close();
+          }
+          JS
+          node smoke.mjs
