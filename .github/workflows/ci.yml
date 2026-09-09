@@ -59,6 +59,14 @@ jobs:
           grep -Fxq '.env.*' .dockerignore
       - name: Validate auxiliary Python services
         run: python -m py_compile openai-gateway/openai_gateway.py automation/runner.py runtime-init/init_runtime.py
+      - name: Refresh patched dependency lockfile
+        run: npm install next@16.3.4 eslint-config-next@16.3.4 --save-exact --package-lock-only --ignore-scripts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: refreshed-lock
+          path: |
+            package.json
+            package-lock.json
       - run: npm ci
       - run: npm run lint
       - run: npm test
