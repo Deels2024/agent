@@ -1,0 +1,65 @@
+name: Photo browser E2E
+
+on:
+  push:
+    branches: [codex/photo-browser-e2e]
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install temporary browser test tools
+        run: |
+          npm install --no-save --ignore-scripts playwright@1.55.0
+          npx playwright install chromium
+      - name: Download real HEIC and create JPEG
+        run: |
+          curl -fL --retry 3 -o /tmp/real.heic https://raw.githubusercontent.com/tigranbs/test-heic-images/master/image1.heic
+          python3 - <<'PY'
+          import base64
+          data = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAACAAIDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABAf/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPxB//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPxB//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxB//9k='
+          open('/tmp/tiny.jpg','wb').write(base64.b64decode(data))
+          PY
+          ls -lh /tmp/real.heic /tmp/tiny.jpg
+      - name: Exercise production upload in Chromium
+        run: |
+          cat > /tmp/photo-e2e.mjs <<'JS'
+          import { chromium } from 'playwright';
+
+          const origin = 'http://5.183.191.139:8788';
+          const browser = await chromium.launch({headless:true});
+          const page = await browser.newPage();
+          const consoleLines = [];
+          page.on('console', msg => consoleLines.push(`console:${msg.type()}:${msg.text()}`));
+          page.on('pageerror', err => consoleLines.push(`pageerror:${err.name}:${err.message}`));
+
+          async function testFile(label, path) {
+            consoleLines.length = 0;
+            await page.goto(`${origin}/live-search`, {waitUntil:'networkidle', timeout:30000});
+            await page.getByRole('button', {name:'По фото'}).click();
+            const input = page.locator('input[type=file]');
+            const responsePromise = page.waitForResponse(r => r.url().includes('/api/recognize'), {timeout:45000})
+              .then(async r => ({status:r.status(), text:(await r.text()).slice(0,600)}))
+              .catch(() => null);
+            await input.setInputFiles(path);
+            const recognize = await responsePromise;
+            await page.waitForTimeout(1000);
+            const body = (await page.locator('body').innerText()).replace(/\s+/g,' ').slice(0,2500);
+            const interesting = body.match(/(Не удалось[^.]{0,180}|Не получилось[^.]{0,180}|Распознаю товар[^.]{0,80}|Мы правильно определили товар[^.]{0,200}|Слишком много распознаваний[^.]{0,160}|HEIC[^.]{0,160})/gi) || [];
+            console.log(JSON.stringify({label, recognize, interesting, console:consoleLines.slice(-20)}, null, 2));
+            if (!recognize) process.exitCode = 2;
+          }
+
+          await testFile('jpeg', '/tmp/tiny.jpg');
+          await testFile('heic', '/tmp/real.heic');
+          await browser.close();
+          JS
+          node /tmp/photo-e2e.mjs
