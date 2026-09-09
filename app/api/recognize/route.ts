@@ -35,8 +35,8 @@ export async function POST(request: Request) {
   if (!openAIConfigured()) return Response.json({ error: "Распознавание по фото ещё не активировано", code: "openai_not_configured" }, { status: 503 });
   try {
     await ensureMarketplaceSchema();
-    const rate = await enforceRateLimit(request, "public-recognition", 8, 3600);
-    if (!rate.allowed) return Response.json({ error: "Лимит распознаваний исчерпан. Повторите позже.", retryAfter: rate.retryAfter }, { status: 429 });
+    const rate = await enforceRateLimit(request, "public-recognition-v2", 24, 3600);
+    if (!rate.allowed) return Response.json({ error: "Слишком много распознаваний за короткое время. Повторите позже.", code: "recognition_rate_limited", retryAfter: rate.retryAfter }, { status: 429, headers: { "Retry-After": String(rate.retryAfter) } });
   } catch {
     return Response.json({ error: "Защита распознавания временно недоступна", code: "rate_limit_unavailable" }, { status: 503 });
   }
@@ -61,9 +61,15 @@ export async function POST(request: Request) {
     }],
   });
   if (!response.ok) {
+    const upstreamError = response.payload.error;
+    const upstreamCode = upstreamError && typeof upstreamError === "object" && "code" in upstreamError ? String((upstreamError as { code?: unknown }).code || "") : "";
+    console.warn("recognize.upstream.failed", { status: response.status, code: upstreamCode || "unknown" });
+    if (response.status === 400 || response.status === 415 || upstreamCode.includes("image")) {
+      return Response.json({ error: "Изображение дошло до сервера, но его не удалось прочитать. Попробуйте другое фото.", code: "recognition_image_invalid", retryable: false }, { status: 422 });
+    }
     return Response.json({
-      error: response.status === 504 ? "Распознавание заняло слишком много времени. Повторите ещё раз." : "Не удалось распознать товар",
-      code: response.status === 504 ? "recognition_timeout" : "recognition_failed",
+      error: response.status === 504 ? "Распознавание заняло слишком много времени. Повторите ещё раз." : response.status === 429 ? "Сервис распознавания временно перегружен. Повторите позже." : "Не удалось распознать товар",
+      code: response.status === 504 ? "recognition_timeout" : response.status === 429 ? "recognition_upstream_rate_limited" : "recognition_failed",
       retryable: response.status >= 500 || response.status === 429,
     }, { status: response.status === 429 ? 429 : response.status === 504 ? 504 : 502 });
   }

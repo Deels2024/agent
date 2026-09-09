@@ -25,11 +25,29 @@ type Recognition = { productName: string; brand?: string; model?: string; barcod
 const rubles = new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 });
 
 const MAX_SOURCE_PHOTO_BYTES = 20 * 1024 * 1024;
-const PHOTO_TARGET_DATA_URL_BYTES = 3_500_000;
+const PHOTO_TARGET_DATA_URL_BYTES = 1_500_000;
+const PHOTO_HARD_DATA_URL_BYTES = 2_400_000;
 
-function loadBrowserImage(file: File): Promise<HTMLImageElement> {
+function likelyHeic(file: File) {
+  return /image\/hei[cf]/i.test(file.type) || /\.(heic|heif)$/i.test(file.name);
+}
+
+async function normalizePhotoBlob(file: File): Promise<Blob> {
+  if (!likelyHeic(file)) return file;
+  try {
+    const { heicTo } = await import("heic-to/csp");
+    const converted = await heicTo({ blob: file, type: "image/jpeg", quality: 0.82 });
+    const blob = Array.isArray(converted) ? converted[0] : converted;
+    if (!(blob instanceof Blob)) throw new Error("heic_conversion_failed");
+    return blob;
+  } catch {
+    throw new Error("heic_conversion_failed");
+  }
+}
+
+function loadBrowserImage(blob: Blob): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
+    const url = URL.createObjectURL(blob);
     const image = new Image();
     image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
     image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image_decode_failed")); };
@@ -54,11 +72,13 @@ function renderCompactJpeg(image: HTMLImageElement, maxEdge: number, quality: nu
 }
 
 async function preparePhotoForRecognition(file: File) {
-  const image = await loadBrowserImage(file);
-  let dataUrl = renderCompactJpeg(image, 1600, 0.82);
-  if (dataUrl.length > PHOTO_TARGET_DATA_URL_BYTES) dataUrl = renderCompactJpeg(image, 1280, 0.74);
-  if (dataUrl.length > PHOTO_TARGET_DATA_URL_BYTES) dataUrl = renderCompactJpeg(image, 1024, 0.68);
-  if (dataUrl.length > 4_500_000) throw new Error("photo_too_large_after_compression");
+  const source = await normalizePhotoBlob(file);
+  const image = await loadBrowserImage(source);
+  let dataUrl = renderCompactJpeg(image, 1400, 0.78);
+  if (dataUrl.length > PHOTO_TARGET_DATA_URL_BYTES) dataUrl = renderCompactJpeg(image, 1152, 0.68);
+  if (dataUrl.length > PHOTO_TARGET_DATA_URL_BYTES) dataUrl = renderCompactJpeg(image, 960, 0.62);
+  if (dataUrl.length > PHOTO_HARD_DATA_URL_BYTES) dataUrl = renderCompactJpeg(image, 800, 0.55);
+  if (dataUrl.length > PHOTO_HARD_DATA_URL_BYTES) throw new Error("photo_too_large_after_compression");
   return dataUrl;
 }
 
@@ -180,7 +200,8 @@ export default function LiveSearchPage() {
     } catch (uploadError) {
       const message = uploadError instanceof Error ? uploadError.message : "";
       if (uploadError instanceof Error && uploadError.name === "AbortError") setError("Распознавание заняло слишком много времени. Повторите попытку.");
-      else if (message === "image_decode_failed") setError("Этот формат фотографии не удалось открыть в браузере. Выберите JPEG, PNG, WebP или сделайте снимок камерой.");
+      else if (message === "heic_conversion_failed") setError("Не удалось преобразовать HEIC/HEIF. Попробуйте выбрать фото ещё раз или сделать новый снимок.");
+      else if (message === "image_decode_failed") setError("Этот файл не удалось открыть как изображение. Выберите JPEG, PNG, WebP, HEIC/HEIF или сделайте новый снимок.");
       else if (message === "photo_too_large_after_compression") setError("Фото слишком большое для распознавания. Выберите другое фото или снимок меньшего разрешения.");
       else setError("Не удалось отправить фотографию. Проверьте соединение и повторите попытку.");
     } finally {
@@ -303,7 +324,7 @@ export default function LiveSearchPage() {
       {mode !== "photo" ? <form className="live-search-form" onSubmit={submit}>
         {mode === "text" ? <input aria-label="Название товара" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Например: Samsung QE65Q80D 65″" /> : <input aria-label="Штрих-код" inputMode="numeric" value={barcode} onChange={(event) => setBarcode(event.target.value.replace(/\D/g, ""))} placeholder="Введите цифры со штрих‑кода" />}
         <button disabled={loading || (mode === "text" ? !query.trim() : !barcode.trim())}>{loading ? "Ищу предложения…" : "Найти выгоднее"}</button>
-      </form> : <label className="photo-drop"><input type="file" accept="image/*" capture="environment" onChange={recognize} /><span>▣</span><b>{recognizing ? "Распознаю товар…" : "Выбрать или сфотографировать товар"}</b><small>Сначала покажем найденную модель — вы сможете её исправить</small></label>}
+      </form> : <label className="photo-drop"><input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif" onChange={recognize} /><span>▣</span><b>{recognizing ? "Распознаю товар…" : "Выбрать или сфотографировать товар"}</b><small>Сначала покажем найденную модель — вы сможете её исправить</small></label>}
       {recognition && <section className="recognition-confirm"><div className="recognition-preview">{photoPreview ? <img src={photoPreview} alt="Загруженный товар" /> : "▣"}</div><div><span className="recognition-confidence">Совпадение {Math.round(recognition.confidence * 100)}%</span><h2>Мы правильно определили товар?</h2><label>Название и модель<input value={query} onChange={(event) => setQuery(event.target.value)} /></label>{barcode && <small>Штрих-код: {barcode}</small>}<div><button className="confirm-button" onClick={() => void runSearch(query, barcode, "photo")}>Да, найти предложения</button><button className="change-photo" onClick={() => { setRecognition(null); setPhotoPreview(""); }}>Выбрать другое фото</button></div></div></section>}
       {error && <div className="search-error"><b>Не получилось выполнить действие</b><span>{error}</span><button onClick={() => mode === "photo" ? setRecognition(null) : void runSearch()}>Попробовать ещё раз</button></div>}
       {actionMessage && <div className="search-action-message" role="status"><span>✓</span><p>{actionMessage}</p><button onClick={() => setActionMessage("")} aria-label="Закрыть">×</button></div>}
