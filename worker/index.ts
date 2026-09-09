@@ -52,7 +52,7 @@ function secureResponse(response: Response, pathname: string) {
   secured.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   secured.headers.set("Permissions-Policy", "camera=(self), microphone=(), geolocation=(), payment=(self)");
   secured.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-  secured.headers.set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://chatgpt.com https://*.chatgpt.com; img-src 'self' data: blob: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' https:");
+  secured.headers.set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://chatgpt.com https://*.chatgpt.com; img-src 'self' data: blob: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; worker-src 'self' blob:; connect-src 'self' https:");
   if (pathname.startsWith("/api/")) secured.headers.set("Cache-Control", "no-store");
   return secured;
 }
