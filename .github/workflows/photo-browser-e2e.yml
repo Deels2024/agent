@@ -31,7 +31,7 @@ jobs:
           ls -lh /tmp/real.heic /tmp/tiny.jpg
       - name: Exercise production upload in Chromium
         run: |
-          cat > /tmp/photo-e2e.mjs <<'JS'
+          cat > photo-e2e.mjs <<'JS'
           import { chromium } from 'playwright';
 
           const origin = 'http://5.183.191.139:8788';
@@ -62,4 +62,4 @@ jobs:
           await testFile('heic', '/tmp/real.heic');
           await browser.close();
           JS
-          node /tmp/photo-e2e.mjs
+          node photo-e2e.mjs
