@@ -10,34 +10,23 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - name: Probe realistic image payload sizes
+      - name: Probe JSON body-size path quickly
         run: |
           python3 - <<'PY'
-          import base64, json, os, struct, subprocess, zlib
-
-          def chunk(kind, data):
-              return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
-
-          def make_png(size):
-              rows=[]
-              for _ in range(size):
-                  rows.append(b'\x00' + os.urandom(size * 3))
-              raw=b''.join(rows)
-              return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw, 1)) + chunk(b'IEND', b'')
-
-          for size in (384, 512, 768, 1024):
-              png=make_png(size)
-              data_url='data:image/png;base64,' + base64.b64encode(png).decode()
+          import json, subprocess
+          for chars in (500_000, 900_000, 1_200_000, 2_000_000):
+              # Syntactically valid base64, intentionally not a valid PNG. This isolates request-body handling from vision latency.
+              data_url='data:image/png;base64,' + ('A' * chars)
               body=json.dumps({'imageDataUrl': data_url}).encode()
               open('/tmp/payload.json','wb').write(body)
-              cmd=['curl','--silent','--show-error','--max-time','120','-o','/tmp/response.json','-w','%{http_code}','-H','Content-Type: application/json','--data-binary','@/tmp/payload.json','http://5.183.191.139:8788/api/recognize']
+              cmd=['curl','--silent','--show-error','--max-time','30','-o','/tmp/response.txt','-w','%{http_code}','-H','Content-Type: application/json','--data-binary','@/tmp/payload.json','http://5.183.191.139:8788/api/recognize']
               result=subprocess.run(cmd, capture_output=True, text=True)
               status=result.stdout.strip() or 'curl_error'
               try:
-                  text=open('/tmp/response.json','r',encoding='utf-8',errors='replace').read(500)
+                  text=open('/tmp/response.txt','r',encoding='utf-8',errors='replace').read(250)
               except FileNotFoundError:
-                  text=result.stderr[:500]
-              print(json.dumps({'size': size, 'requestBytes': len(body), 'http': status, 'response': text}, ensure_ascii=False))
+                  text=result.stderr[:250]
+              print(json.dumps({'requestBytes': len(body), 'http': status, 'response': text}, ensure_ascii=False))
           PY
