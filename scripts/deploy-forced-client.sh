@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 host="${DEPLOY_HOST:-5.183.191.139}"
 user="${DEPLOY_USER:-root}"
+public_port="${PUBLIC_PORT:-8788}"
 
 verify_health_log() {
   local log_file="$1"
@@ -42,6 +43,20 @@ if errors:
 PY
 }
 
+verify_public_site() {
+  local base_url="http://${host}:${public_port}"
+  local health
+  health="$(curl --retry 8 --retry-delay 2 --retry-connrefused --connect-timeout 5 --max-time 15 --fail --silent --show-error "${base_url}/api/health")"
+  python3 - "$health" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+if payload.get("ok") is not True or payload.get("service") != "buyer-agent-backend":
+    raise SystemExit("Public backend health check failed")
+PY
+  curl --retry 4 --retry-delay 2 --retry-connrefused --connect-timeout 5 --max-time 15 --fail --silent --show-error "${base_url}/" >/dev/null
+  printf 'Public site verified: %s\n' "$base_url"
+}
+
 for attempt in 1 2; do
   log_file="$(mktemp)"
   set +e
@@ -58,6 +73,7 @@ for attempt in 1 2; do
 
   if [[ "$ssh_status" -eq 0 ]]; then
     verify_health_log "$log_file"
+    verify_public_site
     rm -f "$log_file"
     exit 0
   fi
