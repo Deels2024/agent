@@ -24,6 +24,44 @@ type Recognition = { productName: string; brand?: string; model?: string; barcod
 
 const rubles = new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 });
 
+const MAX_SOURCE_PHOTO_BYTES = 20 * 1024 * 1024;
+const PHOTO_TARGET_DATA_URL_BYTES = 3_500_000;
+
+function loadBrowserImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image_decode_failed")); };
+    image.src = url;
+  });
+}
+
+function renderCompactJpeg(image: HTMLImageElement, maxEdge: number, quality: number) {
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  if (!sourceWidth || !sourceHeight) throw new Error("image_decode_failed");
+  const scale = Math.min(1, maxEdge / Math.max(sourceWidth, sourceHeight));
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("image_canvas_unavailable");
+  context.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+async function preparePhotoForRecognition(file: File) {
+  const image = await loadBrowserImage(file);
+  let dataUrl = renderCompactJpeg(image, 1600, 0.82);
+  if (dataUrl.length > PHOTO_TARGET_DATA_URL_BYTES) dataUrl = renderCompactJpeg(image, 1280, 0.74);
+  if (dataUrl.length > PHOTO_TARGET_DATA_URL_BYTES) dataUrl = renderCompactJpeg(image, 1024, 0.68);
+  if (dataUrl.length > 4_500_000) throw new Error("photo_too_large_after_compression");
+  return dataUrl;
+}
+
 export default function LiveSearchPage() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("text");
@@ -100,30 +138,55 @@ export default function LiveSearchPage() {
   async function submit(event: FormEvent) { event.preventDefault(); await runSearch(); }
 
   async function recognize(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const input = event.currentTarget;
+    const file = input.files?.[0];
     if (!file) return;
-    if (file.size > 8 * 1024 * 1024) { setError("Фотография больше 8 МБ. Выберите файл меньшего размера."); return; }
+    if (file.size > MAX_SOURCE_PHOTO_BYTES) { setError("Фотография больше 20 МБ. Выберите файл меньшего размера."); input.value = ""; return; }
     setRecognizing(true); setError(""); setResult(null); setRecognition(null);
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const imageDataUrl = String(reader.result || "");
+    try {
+      const imageDataUrl = await preparePhotoForRecognition(file);
       setPhotoPreview(imageDataUrl);
+
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 90_000);
+      let response: Response;
       try {
-        const response = await fetch("/api/recognize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ imageDataUrl }) });
-        const payload = await response.json() as { suggestedQuery?: string; recognition?: Recognition; error?: string };
-        if (!response.ok || !payload.recognition) { setError(payload.error || "Не удалось распознать товар"); return; }
-        const recognized = payload.recognition;
-        setRecognition(recognized);
-        setQuery(payload.suggestedQuery || recognized.productName);
-        setBarcode(recognized.barcode || "");
-      } catch {
-        setError("Не удалось отправить фотографию. Повторите попытку.");
+        response = await fetch("/api/recognize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageDataUrl }),
+          signal: controller.signal,
+        });
       } finally {
-        setRecognizing(false);
+        window.clearTimeout(timer);
       }
-    };
-    reader.onerror = () => { setRecognizing(false); setError("Не удалось прочитать фотографию."); };
-    reader.readAsDataURL(file);
+
+      const responseText = await response.text();
+      let payload: { suggestedQuery?: string; recognition?: Recognition; error?: string; code?: string } = {};
+      try {
+        payload = responseText ? JSON.parse(responseText) as typeof payload : {};
+      } catch {
+        setError(response.status === 413
+          ? "Фото оказалось слишком большим для отправки. Оно будет сильнее уменьшено при следующей попытке."
+          : `Сервер вернул некорректный ответ (${response.status}). Повторите попытку.`);
+        return;
+      }
+
+      if (!response.ok || !payload.recognition) { setError(payload.error || `Не удалось распознать товар (${response.status})`); return; }
+      const recognized = payload.recognition;
+      setRecognition(recognized);
+      setQuery(payload.suggestedQuery || recognized.productName);
+      setBarcode(recognized.barcode || "");
+    } catch (uploadError) {
+      const message = uploadError instanceof Error ? uploadError.message : "";
+      if (uploadError instanceof Error && uploadError.name === "AbortError") setError("Распознавание заняло слишком много времени. Повторите попытку.");
+      else if (message === "image_decode_failed") setError("Этот формат фотографии не удалось открыть в браузере. Выберите JPEG, PNG, WebP или сделайте снимок камерой.");
+      else if (message === "photo_too_large_after_compression") setError("Фото слишком большое для распознавания. Выберите другое фото или снимок меньшего разрешения.");
+      else setError("Не удалось отправить фотографию. Проверьте соединение и повторите попытку.");
+    } finally {
+      setRecognizing(false);
+      input.value = "";
+    }
   }
 
   async function createProtectedOrder(offer: Offer) {
@@ -240,7 +303,7 @@ export default function LiveSearchPage() {
       {mode !== "photo" ? <form className="live-search-form" onSubmit={submit}>
         {mode === "text" ? <input aria-label="Название товара" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Например: Samsung QE65Q80D 65″" /> : <input aria-label="Штрих-код" inputMode="numeric" value={barcode} onChange={(event) => setBarcode(event.target.value.replace(/\D/g, ""))} placeholder="Введите цифры со штрих‑кода" />}
         <button disabled={loading || (mode === "text" ? !query.trim() : !barcode.trim())}>{loading ? "Ищу предложения…" : "Найти выгоднее"}</button>
-      </form> : <label className="photo-drop"><input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={recognize} /><span>▣</span><b>{recognizing ? "Распознаю товар…" : "Выбрать или сфотографировать товар"}</b><small>Сначала покажем найденную модель — вы сможете её исправить</small></label>}
+      </form> : <label className="photo-drop"><input type="file" accept="image/*" capture="environment" onChange={recognize} /><span>▣</span><b>{recognizing ? "Распознаю товар…" : "Выбрать или сфотографировать товар"}</b><small>Сначала покажем найденную модель — вы сможете её исправить</small></label>}
       {recognition && <section className="recognition-confirm"><div className="recognition-preview">{photoPreview ? <img src={photoPreview} alt="Загруженный товар" /> : "▣"}</div><div><span className="recognition-confidence">Совпадение {Math.round(recognition.confidence * 100)}%</span><h2>Мы правильно определили товар?</h2><label>Название и модель<input value={query} onChange={(event) => setQuery(event.target.value)} /></label>{barcode && <small>Штрих-код: {barcode}</small>}<div><button className="confirm-button" onClick={() => void runSearch(query, barcode, "photo")}>Да, найти предложения</button><button className="change-photo" onClick={() => { setRecognition(null); setPhotoPreview(""); }}>Выбрать другое фото</button></div></div></section>}
       {error && <div className="search-error"><b>Не получилось выполнить действие</b><span>{error}</span><button onClick={() => mode === "photo" ? setRecognition(null) : void runSearch()}>Попробовать ещё раз</button></div>}
       {actionMessage && <div className="search-action-message" role="status"><span>✓</span><p>{actionMessage}</p><button onClick={() => setActionMessage("")} aria-label="Закрыть">×</button></div>}
