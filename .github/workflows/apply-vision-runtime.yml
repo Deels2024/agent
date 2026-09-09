@@ -1,0 +1,25 @@
+name: Apply vision runtime patch
+
+on:
+  push:
+    branches: [codex/vision-model-timeout-fix]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/vision-model-timeout-fix
+      - run: python3 scripts/patch-vision-runtime.py
+      - name: Commit vision runtime fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add runtime-init/init_runtime.py openai-gateway/openai_gateway.py app/api/recognize/route.ts tests/openai-gateway.test.mjs tests/vision-recognition.test.mjs
+          git commit -m "fix: isolate and accelerate Agent vision model"
+          git push origin HEAD:codex/vision-model-timeout-fix
