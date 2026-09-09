@@ -1,4 +1,5 @@
 import { ensureMarketplaceSchema } from "../../../db/ensure";
+import { notificationDeliveryConfigured } from "../../../lib/email";
 import { openAIReadiness, openAITransport } from "../../../lib/openai";
 import { hasRuntimeValue, runtimeEnv, runtimeValue } from "../../../lib/runtime";
 import { authMode } from "../../../lib/standalone-auth";
@@ -8,7 +9,7 @@ const compliantPaymentModels = new Set(["seller_direct", "bank_safe_deal", "spli
 export async function GET() {
   const [databaseReady, ai] = await Promise.all([databaseIsReady(), openAIReadiness()]);
   const deliveryConfigured = hasRuntimeValue("APISHIP_API_TOKEN") || hasRuntimeValue("DELIVERY_API_KEY");
-  const notificationsConfigured = hasRuntimeValue("NOTIFICATION_WEBHOOK_URL") && hasRuntimeValue("NOTIFICATION_WEBHOOK_SECRET");
+  const notificationsConfigured = notificationDeliveryConfigured();
   const paymentConfigured = runtimeValue("PAYMENT_PROVIDER") === "webhook"
     && compliantPaymentModels.has(runtimeValue("PAYMENT_MODEL") ?? "")
     && hasRuntimeValue("PAYMENT_API_URL")
