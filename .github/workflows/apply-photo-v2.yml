@@ -1,0 +1,25 @@
+name: Apply photo v2 patch
+
+on:
+  push:
+    branches: [codex/photo-upload-heic-ratefix]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/photo-upload-heic-ratefix
+      - run: python3 scripts/patch-photo-v2.py
+      - name: Commit production fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/live-search/page.tsx app/api/recognize/route.ts tests/photo-upload.test.mjs
+          git commit -m "fix: make photo recognition production-ready"
+          git push origin HEAD:codex/photo-upload-heic-ratefix
