@@ -101,9 +101,9 @@ test("gateway remains available while exposing safe upstream readiness", () => {
   assert.match(openaiGateway, /request_payload\["model"\] = model\(\)/);
 });
 
-test("production app is reachable only through the host reverse proxy", () => {
-  assert.match(compose, /127\.0\.0\.1:8788:8788/);
-  assert.doesNotMatch(compose, /0\.0\.0\.0:8788:8788/);
+test("production app is directly reachable on public port 8788", () => {
+  assert.match(compose, /0\.0\.0\.0:8788:8788/);
+  assert.doesNotMatch(compose, /127\.0\.0\.1:8788:8788/);
 });
 
 test("background automation reads only the shared cron secret", () => {
